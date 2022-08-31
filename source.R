@@ -7,6 +7,7 @@ library(ggplot2)
 dbtlb <- function(Pi,X,p,theta,M,log=FALSE,Pi_full=NULL){
   if(is.vector(Pi)){Pi <- matrix(Pi,nrow=1)}
   if(is.vector(X)){X <- matrix(X,nrow=1)}
+  if(is.vector(Pi_full)){Pi_full <- matrix(Pi_full,nrow=1)}
   if(!is.matrix(X)){stop("X must be a matrix of ratings")}
   if(!is.matrix(Pi)){stop("Pi must be a matrix of rankings")}
   if(length(p)!=ncol(X)){stop("length(p) must equal ncol(X)")}
@@ -21,6 +22,8 @@ dbtlb <- function(Pi,X,p,theta,M,log=FALSE,Pi_full=NULL){
   }
 }
 dbtl <- function(Pi,worth,log=FALSE,Pi_full=NULL){
+  if(is.vector(Pi)){Pi <- matrix(Pi,nrow=1)}
+  if(is.vector(Pi_full)){Pi_full <- matrix(Pi_full,nrow=1)}
   if(!is.matrix(Pi)){stop("Pi must be a matrix of (partial) rankings")}
   if(!is.null(Pi_full)){if(nrow(Pi)!=nrow(Pi_full)){stop("nrow(Pi) must equal nrow(Pi_full).")}}
   if(length(worth)<max(c(0,Pi,Pi_full),na.rm=T)){stop("Ensure one worth parameter for every object in Pi and/or Pi_full")}
@@ -143,7 +146,7 @@ map_btlb <- function(K,Pi,X,M,a,b,gamma1,gamma2,tol=1,maxit=50){
 #### MFMM Estimation ####
 btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
                      startK = 1, mh_pjk = 0.01, mh_thetak = 1,
-                     max_iters = 100,burn = 50,thin = 2,seed = NULL){
+                     max_iters = 100, mh_iters = 5, burn = 0.5,thin = 2,seed = NULL){
   
   print("Initializing Chain")
   if(!is.null(seed)){set.seed(seed)}
@@ -154,7 +157,7 @@ btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
   R <- ncol(Pi)
   
   ## Set Up Data Storage
-  which_keep <- seq(from=burn,to=max_iters,by=thin)
+  which_keep <- seq(from=round(burn*max_iters*mh_iters),to=max_iters * mh_iters,by=thin)
   K_all <- c()
   Kplus_all <- c()
   pi_all <- matrix(NA,nrow=length(which_keep),ncol=I)
@@ -175,15 +178,18 @@ btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
   iter <- 1
   progress_iters <- round(seq(0,max(which_keep),length=11))[-1]
   while(iter <= max(which_keep)){
-    if(iter %in% progress_iters){
-      print(paste0(which(progress_iters==iter)*10,"% Complete: Iteration ",iter," out of ",max(which_keep)))
-      print(paste0("Current K = ",K,"; Kplus = ",Kplus))
-    }
     
     ## Step 1: Update Labels
-    for(i in 1:I){Z[i] <- sample.int(K,1,prob=unlist(lapply(1:K,function(k){ #sample
-      pi[k]*dbtlb(Pi=Pi[i,],X=X[i,],p=ptheta[1:J,k],theta=ptheta[J+1,k],M=M)
-    })))}
+    probs <- matrix(NA,nrow=I,ncol=K)
+    for(k in 1:K){
+      pk <- ptheta[1:J,k]
+      thetak <- ptheta[J+1,k]
+      worthk <- exp(-thetak*pk)
+      probs[,k] <- exp(log(pi[k])+unlist(lapply(1:I,function(i){
+        dbtl(Pi=Pi[i,],worth=worthk,Pi_full=Pi_full[i,],log=T)+sum(dbinom(x=X[i,],size=M,prob=pk,log=T),na.rm=T)
+      })))
+    }
+    Z <- apply(probs,1,function(prob){sample.int(K,1,prob=prob)})
     Nk <- unlist(lapply(1:K,function(k){sum(Z==k)})) #update Nk, Kplus, and reorder
     Kplus <- sum(Nk>0)
     ptheta <- as.matrix(ptheta[,which(Nk>0)])
@@ -194,53 +200,62 @@ btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
     
     
     ## Step 2: Update non-empty component parameters
-    for(k in 1:Kplus){
-      whichk <- which(Z == k)
-      constant1 <- a+apply(matrix(X[whichk,],nrow=length(whichk)),2,sum,na.rm=T)-1
-      constant2 <- b+apply(M-matrix(X[whichk,],nrow=length(whichk)),2,sum,na.rm=T)-1
-      Pi_mat <- matrix(Pi[whichk,],nrow=length(whichk))
-      if(is.null(Pi_full)){Pi_full_mat <- NULL}else{Pi_full_mat <- matrix(Pi_full[whichk,],nrow=length(whichk))}
-      
-      for(j in 1:J){ #update each p_jk
-        prop_pjk <- rnorm(1,ptheta[j,k],mh_pjk)
-        while(prop_pjk<=0 | prop_pjk>=1){prop_pjk <- rnorm(1,ptheta[j,k],mh_pjk)}
-        prop_p <- ptheta[1:J,k]
-        prop_p[j] <- prop_pjk
-        curr_worth <- exp(-ptheta[J+1,k]*ptheta[1:J,k])
-        prop_worth <- exp(-ptheta[J+1,k]*prop_p)
+    for(mh_iter in 0:(mh_iters-1)){
+      for(k in 1:Kplus){
+        whichk <- which(Z == k)
+        constant1 <- a+apply(matrix(X[whichk,],nrow=length(whichk)),2,sum,na.rm=T)-1
+        constant2 <- b+apply(M-matrix(X[whichk,],nrow=length(whichk)),2,sum,na.rm=T)-1
+        Pi_mat <- matrix(Pi[whichk,],nrow=length(whichk))
+        if(is.null(Pi_full)){Pi_full_mat <- NULL}else{Pi_full_mat <- matrix(Pi_full[whichk,],nrow=length(whichk))}
         
-        logprob_prop <- dbtl(Pi=Pi_mat,worth=prop_worth,log=T,Pi_full=Pi_full_mat)+
-          (constant1[j])*log(prop_pjk)+(constant2[j])*log(1-prop_pjk)
-        logprob_curr <- dbtl(Pi=Pi_mat,worth=curr_worth,log=T,Pi_full=Pi_full_mat)+
-          (constant1[j])*log(ptheta[j,k])+(constant2[j])*log(1-ptheta[j,k])
+        for(j in 1:J){ #update each p_jk
+          prop_pjk <- rnorm(1,ptheta[j,k],mh_pjk)
+          while(prop_pjk<=0 | prop_pjk>=1){prop_pjk <- rnorm(1,ptheta[j,k],mh_pjk)}
+          prop_p <- ptheta[1:J,k]
+          prop_p[j] <- prop_pjk
+          curr_worth <- exp(-ptheta[J+1,k]*ptheta[1:J,k])
+          prop_worth <- exp(-ptheta[J+1,k]*prop_p)
+          
+          logprob_prop <- dbtl(Pi=Pi_mat,worth=prop_worth,log=T,Pi_full=Pi_full_mat)+
+            (constant1[j])*log(prop_pjk)+(constant2[j])*log(1-prop_pjk)
+          logprob_curr <- dbtl(Pi=Pi_mat,worth=curr_worth,log=T,Pi_full=Pi_full_mat)+
+            (constant1[j])*log(ptheta[j,k])+(constant2[j])*log(1-ptheta[j,k])
+          
+          u <- runif(1)
+          if(log(u) <  logprob_prop-logprob_curr){
+            accept_p <- c(accept_p,1)
+            ptheta[j,k] <- prop_pjk
+          }else{accept_p <- c(accept_p,0)}
+        }
+        #update theta_k
+        prop_thetak <- rnorm(1,ptheta[J+1,k],mh_thetak)
+        while(prop_thetak<=0){prop_thetak <- rnorm(1,ptheta[J+1,k],mh_thetak)}
+        prop_worth <- exp(-prop_thetak*ptheta[1:J,k])
+        curr_worth <- exp(-ptheta[J+1,k]*ptheta[1:J,k])
+        
+        logprob_prop <- dbtl(Pi_mat,worth=prop_worth,log=T,Pi_full=Pi_full_mat)+
+          (gamma1-1)*log(prop_thetak)-gamma2*prop_thetak
+        logprob_curr <- dbtl(Pi_mat,worth=curr_worth,log=T,Pi_full=Pi_full_mat)+
+          (gamma1-1)*log(ptheta[J+1,k])-gamma2*ptheta[J+1,k]
         
         u <- runif(1)
         if(log(u) <  logprob_prop-logprob_curr){
-          accept_p <- c(accept_p,1)
-          ptheta[j,k] <- prop_pjk
-        }else{accept_p <- c(accept_p,0)}
+          accept_theta <- c(accept_theta,1)
+          ptheta[J+1,k] <- prop_thetak
+        }else{accept_theta <- c(accept_theta,0)}
       }
-      #update theta_k
-      prop_thetak <- rnorm(1,ptheta[J+1,k],mh_thetak)
-      while(prop_thetak<=0){prop_thetak <- rnorm(1,ptheta[J+1,k],mh_thetak)}
-      prop_worth <- exp(-prop_thetak*ptheta[1:J,k])
-      curr_worth <- exp(-ptheta[J+1,k]*ptheta[1:J,k])
-      
-      logprob_prop <- dbtl(Pi_mat,worth=prop_worth,log=T,Pi_full=Pi_full_mat)+
-        (gamma1-1)*log(prop_thetak)-gamma2*prop_thetak
-      logprob_curr <- dbtl(Pi_mat,worth=curr_worth,log=T,Pi_full=Pi_full_mat)+
-        (gamma1-1)*log(ptheta[J+1,k])-gamma2*ptheta[J+1,k]
-      
-      u <- runif(1)
-      if(log(u) <  logprob_prop-logprob_curr){
-        accept_theta <- c(accept_theta,1)
-        ptheta[J+1,k] <- prop_thetak
-      }else{accept_theta <- c(accept_theta,0)}
+      if(iter+mh_iter %in% which_keep){
+        it <- which(which_keep==(iter+mh_iter))
+        p_all[,1:Kplus,it] <- ptheta[1:J,] #update only the first Kplus parameters,
+        theta_all[it,1:Kplus] <- ptheta[J+1,] #(will update the rest later!)
+      }
     }
     
-    ## Step 3: Update K and gamma (skipped here)
-    probs <- unlist(lapply(Kplus:(Kplus+100),function(k){dpois(k-1,lambda,log=T)+lfactorial(k)-lfactorial(k-Kplus)+
-                                                               lgamma(gamma*k)-lgamma(I+gamma*k)}))
+    
+    ## Step 3: Update K (and gamma; skipped here)
+    probs <- unlist(lapply(Kplus:(Kplus+100),function(k){
+      dpois(k-1,lambda,log=T)+lfactorial(k)-lfactorial(k-Kplus)+lgamma(gamma*k)-lgamma(I+gamma*k)
+    }))
     K <- sample(Kplus:(Kplus+100),1,prob = exp(probs-logSumExp(probs)))
     
     
@@ -255,23 +270,32 @@ btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
     if(Kplus > K){stop("something wrong with Kplus!")}
     
     ## Save Values and Update Counter
-    if(iter %in% which_keep){
-      it <- which(which_keep==iter)
-      K_all <- c(K_all,K)
-      Kplus_all <- c(Kplus_all,Kplus)
-      pi_all[it,1:K] <- pi
-      p_all[,1:K,it] <- ptheta[1:J,]
-      theta_all[it,1:K] <- ptheta[J+1,]
-      Z_all[it,] <- Z
+    for(mh_iter in 0:(mh_iters-1)){
+      if((iter+mh_iter) %in% which_keep){
+        it <- which(which_keep==(iter+mh_iter))
+        K_all <- c(K_all,K)
+        Kplus_all <- c(Kplus_all,Kplus)
+        pi_all[it,1:K] <- pi
+        Z_all[it,] <- Z
+        if(K>Kplus){
+          p_all[,(Kplus+1):K,it] <- ptheta[1:J,(Kplus+1):K] #update only the first Kplus parameters,
+          theta_all[it,(Kplus+1):K] <- ptheta[J+1,(Kplus+1):K] #(will update the rest later!)
+        }
+      }}
+    
+    iter <- iter + mh_iters
+    if(iter >= progress_iters[1]){
+      print(paste0((11-length(progress_iters))*10,"% Complete: Iteration ",iter-1," out of ",max(which_keep)))
+      print(paste0("Current K = ",K,"; Kplus = ",Kplus))
+      progress_iters <- progress_iters[-1]
     }
-    iter <- iter + 1
   }
   print(paste0("Done! Saving ",length(which_keep)," estimate iterations after burning/thinning"))
   return(list(Z=Z_all,p=p_all[,1:max(K_all),],theta=theta_all[,1:max(K_all)],
               pi=pi_all[,1:max(K_all)],K=K_all,Kplus=Kplus_all,
               accept_p=(cumsum(accept_p)/1:length(accept_p))[which_keep],
               accept_theta=(cumsum(accept_theta)/1:length(accept_p))[which_keep],
-              max_iters=max_iters,burn=burn,thin=thin))
+              max_iters=max_iters,mh_iters=mh_iters,burn=burn,thin=thin,seed=seed))
 }
 
 #### Sandbox ####
@@ -351,7 +375,7 @@ lambda <- 1
 res <- btlb_mfm(Pi=Pi,X=X,M=M,gamma=gamma,lambda=lambda,a=a,b=b,
                 gamma1=gamma1,gamma2=gamma2,
                 Pi_full=Pi_full,mh_pjk = .05, mh_thetak = 5,
-                startK=17,max_iters=5000,burn=2000,thin=10)
+                startK=17,max_iters=50,mh_iters=10,burn=.10,thin=10)
 par(mfrow=c(2,2))
 plot(res$accept_p,ylim=c(0,1),type="l",ylab="Accept Prob for p")
 plot(res$accept_theta,ylim=c(0,1),type="l",ylab="Accept Prob for theta")
@@ -382,8 +406,8 @@ ggplot(plot_p,aes(x=Var3,y=value,group=jk,color=factor(Var2)))+
 
 sushiA_score <- as.matrix(read.csv("~/Desktop/Paper2/Sushi/sushi3-2016/sushiA_score.csv")[,-1])
 sushiA_order <- as.matrix(read.csv("~/Desktop/Paper2/Sushi/sushi3-2016/sushiA_order.csv")[,-1])
-X <- sushiA_score[1:1000,]
-Pi <- sushiA_order[1:1000,]
+X <- sushiA_score
+Pi <- sushiA_order
 M <- 4
 load("~/Desktop/Paper2/Sushi/sushi_priorpred_new.RData")
 a <- results$a
@@ -392,13 +416,15 @@ gamma1 <- results$gamma1
 gamma2 <- results$gamma2
 rm(results,sushiA_order,sushiA_score)
 
-gamma <- 1
-lambda <- .1
+gamma <- .1
+lambda <- 5
 
 res <- btlb_mfm(Pi=Pi,X=X,M=M,gamma=gamma,lambda=lambda,a=a,b=b,
                 gamma1=gamma1,gamma2=gamma2,
                 Pi_full=NULL,mh_pjk = .20, mh_thetak = 5,
-                startK=nrow(X),max_iters=100,burn=0,thin=1)
+                startK=50,max_iters=20,mh_iters=5,burn=0,thin=1)
+names(res)
+res$thin
 par(mfrow=c(2,2))
 plot(res$accept_p,ylim=c(0,1),type="l",ylab="Accept Prob for p")
 plot(res$accept_theta,ylim=c(0,1),type="l",ylab="Accept Prob for theta")
