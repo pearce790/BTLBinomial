@@ -2,6 +2,7 @@
 library(gtools)
 library(matrixStats)
 library(ggplot2)
+library(fipp) #for calculating prior on Kplus
 
 #### BTL-B Density and Generation ####
 dbtlb <- function(Pi,X,p,theta,M,log=FALSE,Pi_full=NULL){
@@ -317,6 +318,12 @@ btlb_mfm <- function(Pi,X,M,Pi_full=NULL,lambda,a,b,gamma1,gamma2,gamma_hyp1,gam
               max_iters=max_iters,mh_iters=mh_iters,burn=burn,thin=thin,seed=seed))
 }
 
+#### Prior Distribution on K+ Example ####
+
+pmfstatic2 <- nClusters(Kplus=1:20,N=10,type="static",gamma=5,maxK=50)
+dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = 7))
+plot(dens)
+sum((1:length(dens))*dens)
 #### Sandbox ####
 
 set.seed(1)
@@ -392,6 +399,13 @@ gamma_hyp1 <- 3
 gamma_hyp2 <- 2
 lambda <- 1
 
+pmfstatic2 <- nClusters(Kplus=1:10,N=nrow(X),type="static",gamma=1,maxK=50)
+dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = 1))
+plot(dens,xlab="K+",ylab="Prior Density",type="b",
+     main=paste0("Prior on K+ (E[K+] = ",round(sum((1:length(dens))*dens),2),")"))
+
+
+
 res <- btlb_mfm(Pi=Pi,X=X,M=M,Pi_full=Pi_full,
                 lambda=lambda,a=a,b=b,gamma1=gamma1,gamma2=gamma2,
                 gamma_hyp1=gamma_hyp1,gamma_hyp2=gamma_hyp2,
@@ -424,7 +438,7 @@ ggplot(plot_p,aes(x=Var3,y=value,group=jk,color=factor(Var2)))+
   geom_line()+theme(legend.position="bottom")+ylim(c(0,1))+
   ylab("p")+xlab("Iteration (after burn/thin)")+
   labs(color="Class")+ggtitle("Trace Plot: p")
-
+#save.image("~/BTLBinomial/AIBS_Panel2_res.RData")
 
 #### Sushi Example ####
 
@@ -442,6 +456,11 @@ rm(results,sushiA_order,sushiA_score)
 
 gamma <- .1
 lambda <- 5
+
+pmfstatic2 <- nClusters(Kplus=1:20,N=nrow(X),type="static",gamma=.1,maxK=50)
+dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = 5))
+plot(dens,xlab="K+",ylab="Prior Density",type="b",
+     main=paste0("Prior on K+ (E[K+] = ",round(sum((1:length(dens))*dens),2),")"))
 
 res <- btlb_mfm(Pi=Pi,X=X,M=M,gamma=gamma,lambda=lambda,a=a,b=b,
                 gamma1=gamma1,gamma2=gamma2,
@@ -473,6 +492,9 @@ ggplot(plot_p,aes(x=Var3,y=value,group=jk,color=factor(Var2)))+
   geom_line()+theme(legend.position="bottom")+ylim(c(0,1))+
   ylab("p")+xlab("Iteration (after burn/thin)")+
   labs(color="Class")+ggtitle("Trace Plot: p")
+
+
+
 
 
 
