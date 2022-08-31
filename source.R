@@ -144,8 +144,8 @@ map_btlb <- function(K,Pi,X,M,a,b,gamma1,gamma2,tol=1,maxit=50){
 }
 
 #### MFMM Estimation ####
-btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
-                     startK = 1, mh_pjk = 0.01, mh_thetak = 1,
+btlb_mfm <- function(Pi,X,M,Pi_full=NULL,lambda,a,b,gamma1,gamma2,gamma_hyp1,gamma_hyp2,
+                     startK = 1, mh_pjk = 0.01, mh_thetak = 1, mh_gamma = 0.1,
                      max_iters = 100, mh_iters = 5, burn = 0.5,thin = 2,seed = NULL){
   
   print("Initializing Chain")
@@ -160,15 +160,18 @@ btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
   which_keep <- seq(from=round(burn*max_iters*mh_iters),to=max_iters * mh_iters,by=thin)
   K_all <- c()
   Kplus_all <- c()
+  gamma_all <- c()
   pi_all <- matrix(NA,nrow=length(which_keep),ncol=I)
   p_all <- array(NA,dim=c(J,I,length(which_keep)))
   theta_all <- matrix(NA,nrow=length(which_keep),ncol=I)
   Z_all <- matrix(NA,nrow=length(which_keep),ncol=I)
   accept_p <- c()
   accept_theta <- c()
+  accept_gamma <- c()
   
   ## Initialize at Random
   K <- startK
+  gamma <- rgamma(1,gamma_hyp1,gamma_hyp2)
   pi <- c(rdirichlet(1,rep(gamma,K)))
   ptheta <- matrix(NA,nrow=J+1,ncol=K)
   for(k in 1:K){ptheta[,k] <- c(rbeta(J,a,b),rgamma(1,gamma1,gamma2))}
@@ -252,12 +255,26 @@ btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
     }
     
     
-    ## Step 3: Update K (and gamma; skipped here)
+    ## Step 3: Update K and gamma
+    
+    #update K
     probs <- unlist(lapply(Kplus:(Kplus+100),function(k){
       dpois(k-1,lambda,log=T)+lfactorial(k)-lfactorial(k-Kplus)+lgamma(gamma*k)-lgamma(I+gamma*k)
     }))
     K <- sample(Kplus:(Kplus+100),1,prob = exp(probs-logSumExp(probs)))
     
+    #update gamma
+    prop_gamma <- rnorm(1,gamma,mh_gamma)
+    while(prop_gamma<=0){prop_gamma <- rnorm(1,gamma,mh_gamma)}
+    logprob_prop <- dgamma(prop_gamma,gamma_hyp1,gamma_hyp2,log=TRUE)+lgamma(prop_gamma*K)-lgamma(I+prop_gamma*K)+
+      sum(lgamma(Nk[1:Kplus]+prop_gamma)-lgamma(prop_gamma))
+    logprob_curr <- dgamma(gamma,3,2,log=TRUE)+lgamma(gamma*K)-lgamma(I+gamma*K)+
+      sum(lgamma(Nk[1:Kplus]+gamma)-lgamma(gamma))
+    u <- runif(1)
+    if(log(u) <  logprob_prop-logprob_curr){
+      accept_gamma <- c(accept_gamma,1)
+      gamma <- prop_gamma
+    }else{accept_gamma <- c(accept_gamma,0)}
     
     ## Step 4: Update empty components
     if(K>Kplus){
@@ -275,6 +292,7 @@ btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
         it <- which(which_keep==(iter+mh_iter))
         K_all <- c(K_all,K)
         Kplus_all <- c(Kplus_all,Kplus)
+        gamma_all <- c(gamma_all,gamma)
         pi_all[it,1:K] <- pi
         Z_all[it,] <- Z
         if(K>Kplus){
@@ -284,7 +302,7 @@ btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
       }}
     
     iter <- iter + mh_iters
-    if(iter >= progress_iters[1]){
+    if(length(progress_iters)>0 & iter >= progress_iters[1]){
       print(paste0((11-length(progress_iters))*10,"% Complete: Iteration ",iter-1," out of ",max(which_keep)))
       print(paste0("Current K = ",K,"; Kplus = ",Kplus))
       progress_iters <- progress_iters[-1]
@@ -292,9 +310,10 @@ btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
   }
   print(paste0("Done! Saving ",length(which_keep)," estimate iterations after burning/thinning"))
   return(list(Z=Z_all,p=p_all[,1:max(K_all),],theta=theta_all[,1:max(K_all)],
-              pi=pi_all[,1:max(K_all)],K=K_all,Kplus=Kplus_all,
-              accept_p=(cumsum(accept_p)/1:length(accept_p))[which_keep],
-              accept_theta=(cumsum(accept_theta)/1:length(accept_p))[which_keep],
+              pi=pi_all[,1:max(K_all)],K=K_all,Kplus=Kplus_all,gamma=gamma_all,
+              accept_p=(cumsum(accept_p)/1:length(accept_p))[seq(round(length(accept_p)*burn),length(accept_p),by=thin)],
+              accept_theta=(cumsum(accept_theta)/1:length(accept_theta))[seq(round(length(accept_theta)*burn),length(accept_theta),by=thin)],
+              accept_gamma=(cumsum(accept_gamma)/1:length(accept_gamma))[seq(round(length(accept_gamma)*burn),length(accept_gamma),by=thin)],
               max_iters=max_iters,mh_iters=mh_iters,burn=burn,thin=thin,seed=seed))
 }
 
@@ -314,19 +333,19 @@ a <- 1
 b <- 1
 gamma1 <- 10
 gamma2 <- 0.5
-
-gamma <- 1
 lambda <- 3
 
-res <- btlb_mfm(Pi=Pi,X=X,M=M,gamma=gamma,lambda=lambda,a=a,b=b,
-                gamma1=gamma1,gamma2=gamma2,
-                Pi_full=NULL,mh_pjk = .05, mh_thetak = 5,
-                startK=15,max_iters=200,burn=0,thin=10)
-par(mfrow=c(2,2))
+res <- btlb_mfm(Pi=Pi,X=X,M=M,lambda=lambda,a=a,b=b,
+                gamma1=gamma1,gamma2=gamma2,gamma_hyp1=3,gamma_hyp2=2,
+                Pi_full=NULL,mh_pjk = .05, mh_thetak = 5,mh_gamma=0.5,
+                startK=15,max_iters=100,mh_iters=10,burn=0,thin=2)
+par(mfrow=c(2,3))
 plot(res$accept_p,ylim=c(0,1),type="l",ylab="Accept Prob for p")
 plot(res$accept_theta,ylim=c(0,1),type="l",ylab="Accept Prob for theta")
+plot(res$accept_gamma,ylim=c(0,1),type="l",ylab="Accept Prob for gamma")
 plot(res$K,type="l",ylim=c(1,max(res$K,res$Kplus)),ylab="K")
 plot(res$Kplus,type="l",ylim=c(1,max(res$K,res$Kplus)),ylab="Kplus")
+plot(res$gamma,type="l",ylim=c(0,max(res$gamma)+1),ylab="gamma")
 ggplot(reshape2::melt(res$pi),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
   geom_line()+ylim(c(0,1))+theme(legend.position="bottom")+
   ylab("Class Proportion Estimate")+xlab("Iteration (after burn/thin)")+
@@ -369,18 +388,23 @@ gamma1 <- 10
 gamma2 <- 0.5
 rm(coi,coi2,fit,Pi2,X2,i,J,tmp,Proposals2,Reviewers2)
 
-gamma <- 1
+gamma_hyp1 <- 3
+gamma_hyp2 <- 2
 lambda <- 1
 
-res <- btlb_mfm(Pi=Pi,X=X,M=M,gamma=gamma,lambda=lambda,a=a,b=b,
-                gamma1=gamma1,gamma2=gamma2,
-                Pi_full=Pi_full,mh_pjk = .05, mh_thetak = 5,
-                startK=17,max_iters=50,mh_iters=10,burn=.10,thin=10)
-par(mfrow=c(2,2))
+res <- btlb_mfm(Pi=Pi,X=X,M=M,Pi_full=Pi_full,
+                lambda=lambda,a=a,b=b,gamma1=gamma1,gamma2=gamma2,
+                gamma_hyp1=gamma_hyp1,gamma_hyp2=gamma_hyp2,
+                mh_pjk = .05, mh_thetak = 5, mh_gamma = 1,
+                startK=17,max_iters=1000,mh_iters=10,burn=.50,thin=5,
+                seed = 1)
+par(mfrow=c(2,3))
 plot(res$accept_p,ylim=c(0,1),type="l",ylab="Accept Prob for p")
 plot(res$accept_theta,ylim=c(0,1),type="l",ylab="Accept Prob for theta")
+plot(res$accept_gamma,ylim=c(0,1),type="l",ylab="Accept Prob for gamma")
 plot(res$K,type="l",ylim=c(1,max(res$K,res$Kplus)),ylab="K")
 plot(res$Kplus,type="l",ylim=c(1,max(res$K,res$Kplus)),ylab="Kplus")
+plot(res$gamma,type="l",ylim=c(0,max(res$gamma)+1),ylab="gamma")
 ggplot(reshape2::melt(res$pi),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
   geom_line()+ylim(c(0,1))+theme(legend.position="bottom")+
   ylab("Class Proportion Estimate")+xlab("Iteration (after burn/thin)")+
