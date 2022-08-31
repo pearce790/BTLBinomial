@@ -154,7 +154,7 @@ btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
   R <- ncol(Pi)
   
   ## Set Up Data Storage
-  which_keep <- seq(from=burn+1,to=max_iters,by=thin)
+  which_keep <- seq(from=burn,to=max_iters,by=thin)
   K_all <- c()
   Kplus_all <- c()
   pi_all <- matrix(NA,nrow=length(which_keep),ncol=I)
@@ -239,9 +239,9 @@ btlb_mfm <- function(Pi,X,M,gamma,lambda,a,b,gamma1,gamma2,Pi_full=NULL,
     }
     
     ## Step 3: Update K and gamma (skipped here)
-    probs <- unlist(lapply(Kplus:(Kplus+100),function(k){exp(dpois(k-1,lambda,log=T)+lfactorial(k)-lfactorial(k-Kplus)+
-                                                               lgamma(gamma*k)-lgamma(I+gamma*k))}))
-    K <- sample(Kplus:(Kplus+100),1,prob = probs)
+    probs <- unlist(lapply(Kplus:(Kplus+100),function(k){dpois(k-1,lambda,log=T)+lfactorial(k)-lfactorial(k-Kplus)+
+                                                               lgamma(gamma*k)-lgamma(I+gamma*k)}))
+    K <- sample(Kplus:(Kplus+100),1,prob = exp(probs-logSumExp(probs)))
     
     
     ## Step 4: Update empty components
@@ -321,6 +321,109 @@ ggplot(plot_p,aes(x=Var3,y=value,group=jk,color=factor(jk)))+
   geom_line()+theme(legend.position="none")+ylim(c(0,1))+
   ylab("p")+xlab("Iteration (after burn/thin)")+
   ggtitle("Trace Plot: p")
+
+
+
+
+#### AIBS Example ####
+
+load("/Users/pearce790/Desktop/Elena Errant Files/Experiments/Panel2_2021.RData")
+coi <- coi2
+X <- as.matrix(X2)
+Pi <- as.matrix(Pi2)
+M <- 40
+J <- ncol(X)
+Pi_full <- matrix(NA,nrow=nrow(X),ncol=J)
+for(i in 1:nrow(X)){
+  tmp <- na.exclude(c(Pi[i,],setdiff(1:J,c(Pi[i,],which(coi[i,]==1)))))
+  Pi_full[i,1:length(tmp)] <- tmp
+}
+fit <- fitdistrplus::fitdist(data=as.vector(na.exclude(c(X)))/40,distr="beta",method="mme")
+a <- as.numeric(fit$estimate[1])
+b <- as.numeric(fit$estimate[2])
+gamma1 <- 10
+gamma2 <- 0.5
+rm(coi,coi2,fit,Pi2,X2,i,J,tmp,Proposals2,Reviewers2)
+
+gamma <- 1
+lambda <- 1
+
+res <- btlb_mfm(Pi=Pi,X=X,M=M,gamma=gamma,lambda=lambda,a=a,b=b,
+                gamma1=gamma1,gamma2=gamma2,
+                Pi_full=Pi_full,mh_pjk = .05, mh_thetak = 5,
+                startK=17,max_iters=5000,burn=2000,thin=10)
+par(mfrow=c(2,2))
+plot(res$accept_p,ylim=c(0,1),type="l",ylab="Accept Prob for p")
+plot(res$accept_theta,ylim=c(0,1),type="l",ylab="Accept Prob for theta")
+plot(res$K,type="l",ylim=c(1,max(res$K,res$Kplus)),ylab="K")
+plot(res$Kplus,type="l",ylim=c(1,max(res$K,res$Kplus)),ylab="Kplus")
+ggplot(reshape2::melt(res$pi),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
+  geom_line()+ylim(c(0,1))+theme(legend.position="bottom")+
+  ylab("Class Proportion Estimate")+xlab("Iteration (after burn/thin)")+
+  labs(color="Class")+ggtitle("Trace Plot: Class Proportions, pi")
+ggplot(reshape2::melt(res$Z),aes(x=Var1,y=jitter(value,.5),group=Var2,color=factor(Var2)))+
+  geom_line()+theme(legend.position="none")+ylim(c(0,max(res$Kplus)+1))+
+  ylab("Class Membership Indicators")+xlab("Iteration (after burn/thin)")+
+  labs(color="Class")+ggtitle("Trace Plot: Class Memberships, Z")
+ggplot(reshape2::melt(res$theta),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
+  geom_line()+theme(legend.position="bottom")+ylim(c(0,max(res$theta)+1))+
+  ylab("theta")+xlab("Iteration (after burn/thin)")+
+  labs(color="Class")+ggtitle("Trace Plot: theta")
+plot_p <- reshape2::melt(res$p)
+plot_p$jk <- as.factor(paste0(plot_p$Var1,"_",plot_p$Var2))
+ggplot(plot_p,aes(x=Var3,y=value,group=jk,color=factor(Var2)))+
+  facet_wrap(vars(Var1))+
+  geom_line()+theme(legend.position="bottom")+ylim(c(0,1))+
+  ylab("p")+xlab("Iteration (after burn/thin)")+
+  labs(color="Class")+ggtitle("Trace Plot: p")
+
+
+#### Sushi Example ####
+
+sushiA_score <- as.matrix(read.csv("~/Desktop/Paper2/Sushi/sushi3-2016/sushiA_score.csv")[,-1])
+sushiA_order <- as.matrix(read.csv("~/Desktop/Paper2/Sushi/sushi3-2016/sushiA_order.csv")[,-1])
+X <- sushiA_score[1:1000,]
+Pi <- sushiA_order[1:1000,]
+M <- 4
+load("~/Desktop/Paper2/Sushi/sushi_priorpred_new.RData")
+a <- results$a
+b <- results$b
+gamma1 <- results$gamma1
+gamma2 <- results$gamma2
+rm(results,sushiA_order,sushiA_score)
+
+gamma <- 1
+lambda <- .1
+
+res <- btlb_mfm(Pi=Pi,X=X,M=M,gamma=gamma,lambda=lambda,a=a,b=b,
+                gamma1=gamma1,gamma2=gamma2,
+                Pi_full=NULL,mh_pjk = .20, mh_thetak = 5,
+                startK=nrow(X),max_iters=100,burn=0,thin=1)
+par(mfrow=c(2,2))
+plot(res$accept_p,ylim=c(0,1),type="l",ylab="Accept Prob for p")
+plot(res$accept_theta,ylim=c(0,1),type="l",ylab="Accept Prob for theta")
+plot(res$K,type="l",ylim=c(1,max(res$K,res$Kplus)),ylab="K")
+plot(res$Kplus,type="l",ylim=c(1,max(res$K,res$Kplus)),ylab="Kplus")
+ggplot(reshape2::melt(res$pi),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
+  geom_line()+ylim(c(0,1))+theme(legend.position="bottom")+
+  ylab("Class Proportion Estimate")+xlab("Iteration (after burn/thin)")+
+  labs(color="Class")+ggtitle("Trace Plot: Class Proportions, pi")
+ggplot(reshape2::melt(res$Z),aes(x=Var1,y=jitter(value,.5),group=Var2,color=factor(Var2)))+
+  geom_line()+theme(legend.position="none")+ylim(c(0,max(res$Kplus)+1))+
+  ylab("Class Membership Indicators")+xlab("Iteration (after burn/thin)")+
+  labs(color="Class")+ggtitle("Trace Plot: Class Memberships, Z")
+ggplot(reshape2::melt(res$theta),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
+  geom_line()+theme(legend.position="bottom")+ylim(c(0,max(res$theta)+1))+
+  ylab("theta")+xlab("Iteration (after burn/thin)")+
+  labs(color="Class")+ggtitle("Trace Plot: theta")
+plot_p <- reshape2::melt(res$p)
+plot_p$jk <- as.factor(paste0(plot_p$Var1,"_",plot_p$Var2))
+ggplot(plot_p,aes(x=Var3,y=value,group=jk,color=factor(Var2)))+
+  facet_wrap(vars(Var1))+
+  geom_line()+theme(legend.position="bottom")+ylim(c(0,1))+
+  ylab("p")+xlab("Iteration (after burn/thin)")+
+  labs(color="Class")+ggtitle("Trace Plot: p")
+
 
 
 
