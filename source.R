@@ -68,26 +68,36 @@ rbtlb <- function(I,p,theta,M,R=length(p)){
 }
 
 #### MAP Estimation ####
-map_btlb <- function(K,Pi,X,M,a,b,gamma1,gamma2,tol=1,maxit=50){
+map_btlb <- function(K,Pi,X,M,Pi_full=NULL,gamma,a,b,gamma1,gamma2,tol=1,maxit=50){
+  
+  # model constants
   I <- nrow(X)
   J <- ncol(X)
   
+  #initialize
   ptheta <- matrix(NA,nrow=J+1,ncol=K)
   ptheta[1:J,] <- rbeta(J*K,a,b)
   ptheta[J+1,] <- rgamma(K,gamma1,gamma2)
-  pi <- rdirichlet(1,rep(gamma,K))
+  pi <- c(rdirichlet(1,rep(gamma,K)))
+  Zhat <- matrix(NA,nrow=I,ncol=K)
   
-  lik_term <- sum(unlist(lapply(1:I,function(i){
-    logSumExp(unlist(lapply(1:K,function(k){
-      log(pi[k])+dbtlb(Pi=matrix(Pi[i,],nrow=1),X=matrix(X[i,],nrow=1),p=ptheta[1:J,k],theta=ptheta[J+1,k],M=M,log=TRUE)
-    })))
-  })))
+  #get current loglikelihood
+  lik_terms <- matrix(NA,nrow=I,ncol=K)
+  for(k in 1:K){
+    pk <- ptheta[1:J,k]
+    thetak <- ptheta[J+1,k]
+    worthk <- exp(-thetak*pk)
+    lik_terms[,k] <- log(pi[k])+unlist(lapply(1:I,function(i){
+      dbtl(Pi=Pi[i,],worth=worthk,Pi_full=Pi_full[i,],log=T)+sum(dbinom(x=X[i,],size=M,prob=pk,log=T),na.rm=T)
+    }))
+  }
+  lik_term <- sum(apply(lik_terms,1,logSumExp))
   prior_term <- log(ddirichlet(pi,rep(gamma,K)))+sum(dbeta(ptheta[1:J,],a,b,log=TRUE))+
     sum(dgamma(ptheta[J+1,],gamma1,gamma2,log=TRUE))
   currobj <- lik_term+prior_term
   
-  Zhat <- matrix(NA,nrow=I,ncol=K)
   
+  #start EM iterations
   diff <- Inf
   nsteps <- 1
   while(diff > tol & nsteps <= maxit){
@@ -119,30 +129,53 @@ map_btlb <- function(K,Pi,X,M,a,b,gamma1,gamma2,tol=1,maxit=50){
         return(-lik_term-prior_term)
       }
       ptheta[,k] <- optim(ptheta[,k],obj,method="L-BFGS-B",lower=rep(0.00001,J+1),upper=c(rep(1-.00001,J),qgamma(.9999,gamma1,gamma2)),
-                          control=list(maxit=10))$par
+                          control=list(maxit=nsteps*5))$par
     }
     
-    lik_term <- sum(unlist(lapply(1:I,function(i){
-      logSumExp(unlist(lapply(1:K,function(k){
-        log(pi[k])+dbtlb(Pi=matrix(Pi[i,],nrow=1),X=matrix(X[i,],nrow=1),p=ptheta[1:J,k],theta=ptheta[J+1,k],M=M,log=TRUE)
-      })))
-    })))
+    lik_terms <- matrix(NA,nrow=I,ncol=K)
+    for(k in 1:K){
+      pk <- ptheta[1:J,k]
+      thetak <- ptheta[J+1,k]
+      worthk <- exp(-thetak*pk)
+      lik_terms[,k] <- log(pi[k])+unlist(lapply(1:I,function(i){
+        dbtl(Pi=Pi[i,],worth=worthk,Pi_full=Pi_full[i,],log=T)+sum(dbinom(x=X[i,],size=M,prob=pk,log=T),na.rm=T)
+      }))
+    }
+    lik_term <- sum(apply(lik_terms,1,logSumExp))
     prior_term <- log(ddirichlet(pi,rep(gamma,K)))+sum(dbeta(ptheta[1:J,],a,b,log=TRUE))+
       sum(dgamma(ptheta[J+1,],gamma1,gamma2,log=TRUE))
     newobj <- lik_term+prior_term
     diff <- abs(newobj - currobj)
     
-    print(diff)
-    print(c(newobj,currobj))
+    print(paste0("Loglikelihood changed by: ",round(diff,2)))
     currobj <- newobj
     nsteps <- nsteps+1
     #print(ptheta)
   }
   
   list(phat=ptheta[1:J,],thetahat=ptheta[J+1,],pihat=pi,zhat=Zhat,obj=currobj)
-  
-  
 }
+
+#set.seed(1)
+J <- 10
+M <- 4
+dat1 <- rbtlb(I=20,p=runif(J),theta=10,M=M)
+dat2 <- rbtlb(I=10,p=runif(J),theta=20,M=M)
+X <- rbind(dat1$X,dat2$X)
+Pi <- rbind(dat1$Pi,dat2$Pi)
+rm(dat1,dat2,J)
+Pi_full <- Pi
+gamma <- 1
+a <- 1
+b <- 1
+gamma1 <- 10
+gamma2 <- 0.5
+K <- 2
+tol <- 1
+maxit <- 50
+
+map_btlb(2,Pi,X,M,Pi_full=NULL,gamma,a,b,gamma1,gamma2,tol=.01,maxit=50)$obj
+
 
 #### MFMM Estimation ####
 btlb_mfm <- function(Pi,X,M,Pi_full=NULL,lambda,a,b,gamma1,gamma2,gamma_hyp1,gamma_hyp2,
@@ -454,18 +487,25 @@ gamma1 <- results$gamma1
 gamma2 <- results$gamma2
 rm(results,sushiA_order,sushiA_score)
 
-gamma <- .1
-lambda <- 5
 
-pmfstatic2 <- nClusters(Kplus=1:20,N=nrow(X),type="static",gamma=.1,maxK=50)
-dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = 5))
+lambda <- 7
+gamma_hyp1 <- 2
+gamma_hyp2 <- 2
+
+pmfstatic2 <- nClusters(Kplus=1:20,N=nrow(X),type="static",gamma=2,maxK=50)
+dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = 7))
 plot(dens,xlab="K+",ylab="Prior Density",type="b",
      main=paste0("Prior on K+ (E[K+] = ",round(sum((1:length(dens))*dens),2),")"))
 
-res <- btlb_mfm(Pi=Pi,X=X,M=M,gamma=gamma,lambda=lambda,a=a,b=b,
-                gamma1=gamma1,gamma2=gamma2,
-                Pi_full=NULL,mh_pjk = .20, mh_thetak = 5,
-                startK=50,max_iters=20,mh_iters=5,burn=0,thin=1)
+res <- btlb_mfm(Pi=Pi,X=X,M=M,lambda=lambda,a=a,b=b,
+                gamma1=gamma1,gamma2=gamma2,gamma_hyp1=gamma_hyp1,gamma_hyp2=gamma_hyp2,
+                Pi_full=NULL,mh_pjk = .20, mh_thetak = 5,mh_gamma=0.5,
+                startK=5,max_iters=2,mh_iters=2,burn=0,thin=1,seed)
+
+
+
+
+btlb_mfm()
 names(res)
 res$thin
 par(mfrow=c(2,2))
