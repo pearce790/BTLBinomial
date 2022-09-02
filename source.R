@@ -156,6 +156,7 @@ map_btlb <- function(K,Pi,X,M,Pi_full=NULL,gamma,a,b,gamma1,gamma2,tol=1,maxit=5
   list(phat=ptheta[1:J,],thetahat=ptheta[J+1,],pihat=pi,zhat=Zhat,obj=currobj)
 }
 
+#### MAP Sandbox ####
 #set.seed(1)
 J <- 10
 M <- 4
@@ -357,7 +358,7 @@ pmfstatic2 <- nClusters(Kplus=1:20,N=10,type="static",gamma=5,maxK=50)
 dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = 7))
 plot(dens)
 sum((1:length(dens))*dens)
-#### Sandbox ####
+#### MFMM Sandbox ####
 
 set.seed(1)
 J <- 10
@@ -432,8 +433,28 @@ gamma_hyp1 <- 3
 gamma_hyp2 <- 2
 lambda <- 1
 
-pmfstatic2 <- nClusters(Kplus=1:10,N=nrow(X),type="static",gamma=1,maxK=50)
-dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = 1))
+
+#hist(rgamma(1000,gamma_hyp1,gamma_hyp2),main="Prior Histogram on Gamma",xlab="gamma")
+#hist(rpois(1000,lambda)+1,main="Prior Histogram on K",xlab="K")
+plot_Kplus <- matrix(NA,nrow=0,ncol=3)
+for(gamma in c(0.01,1,2,3)){
+  pmfstatic2 <- nClusters(Kplus=1:6,N=nrow(X),type="static",gamma=gamma,maxK=50)
+  dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = lambda))
+  plot_Kplus <- rbind(plot_Kplus,matrix(c(rep(gamma,6),1:6,dens),ncol=3))
+}
+plot_Kplus <- as.data.frame(plot_Kplus)
+names(plot_Kplus) <- c("gamma","K+","density")
+plot_Kplus$gamma <- factor(plot_Kplus$gamma)
+levels(plot_Kplus$gamma) <- c(expression("gamma: 0.01"),expression("gamma: 1"),
+                              expression("gamma: 2"),expression("gamma: 3"))
+p1 <- ggplot(plot_Kplus,aes(`K+`,density))+geom_line()+geom_point()+
+  facet_wrap(. ~gamma,labeller = label_parsed)+
+  scale_x_continuous(breaks=1:10)+ylab("Prior Density")
+p1
+ggsave("~/Desktop/PriorKplus_AIBS.pdf",p1,)
+
+
+dens
 plot(dens,xlab="K+",ylab="Prior Density",type="b",
      main=paste0("Prior on K+ (E[K+] = ",round(sum((1:length(dens))*dens),2),")"))
 
