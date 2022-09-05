@@ -5,6 +5,8 @@ library(ggplot2)
 library(fipp) #for calculating prior on Kplus
 library(gridExtra)
 library(dplyr)
+library(salso)
+library(reshape2)
 
 #### BTL-B Density and Generation ####
 dbtlb <- function(Pi,X,p,theta,M,log=FALSE,Pi_full=NULL){
@@ -70,70 +72,28 @@ rbtlb <- function(I,p,theta,M,R=length(p)){
 }
 
 #### MAP Estimation ####
-map_btlb <- function(K,Pi,X,M,Pi_full=NULL,gamma,a,b,gamma1,gamma2,tol=1,maxit=50){
-  
-  # model constants
-  I <- nrow(X)
-  J <- ncol(X)
-  
-  #initialize
-  ptheta <- matrix(NA,nrow=J+1,ncol=K)
-  ptheta[1:J,] <- rbeta(J*K,a,b)
-  ptheta[J+1,] <- rgamma(K,gamma1,gamma2)
-  pi <- c(rdirichlet(1,rep(gamma,K)))
-  Zhat <- matrix(NA,nrow=I,ncol=K)
-  
-  #get current loglikelihood
-  lik_terms <- matrix(NA,nrow=I,ncol=K)
-  for(k in 1:K){
-    pk <- ptheta[1:J,k]
-    thetak <- ptheta[J+1,k]
-    worthk <- exp(-thetak*pk)
-    lik_terms[,k] <- log(pi[k])+unlist(lapply(1:I,function(i){
-      dbtl(Pi=Pi[i,],worth=worthk,Pi_full=Pi_full[i,],log=T)+sum(dbinom(x=X[i,],size=M,prob=pk,log=T),na.rm=T)
-    }))
-  }
-  lik_term <- sum(apply(lik_terms,1,logSumExp))
-  prior_term <- log(ddirichlet(pi,rep(gamma,K)))+sum(dbeta(ptheta[1:J,],a,b,log=TRUE))+
-    sum(dgamma(ptheta[J+1,],gamma1,gamma2,log=TRUE))
-  currobj <- lik_term+prior_term
+set.seed(1)
+J <- 10
+M <- 4
+dat1 <- rbtlb(I=20,p=runif(J),theta=10,M=M)
+dat2 <- rbtlb(I=10,p=runif(J),theta=20,M=M)
+X <- rbind(dat1$X,dat2$X)
+Pi <- rbind(dat1$Pi,dat2$Pi)
+rm(dat1,dat2,J)
+Pi_full <- NULL
+K <- 3
+gamma <- 1
+a <- 1
+b <- 1
+gamma1 <- 10
+gamma2 <- 0.5
+
+map_btlb <- function(Pi,X,M,Pi_full=NULL,K,gamma,
+                     a,b,gamma1,gamma2,tol=1,maxit=50,verbose=TRUE,seed=NULL){
   
   
-  #start EM iterations
-  diff <- Inf
-  nsteps <- 1
-  while(diff > tol & nsteps <= maxit){
-    print(paste0("EM Iteration: ",nsteps))
-    
-    # E Step
-    for(i in 1:I){
-      lprobs <- unlist(lapply(1:K,function(k){
-        log(pi[k])+dbtlb(Pi=matrix(Pi[i,],nrow=1),X=matrix(X[i,],nrow=1),p=ptheta[1:J,k],
-                         theta=ptheta[J+1,k],M=M,log=T)
-      }))
-      Zhat[i,] <- exp(lprobs-logSumExp(lprobs))
-    }
-    
-    # M Step
-    pi <- (gamma-1+apply(Zhat,2,sum))/(I - K + gamma*K)
-    if(round(sum(pi),5)!=1){print("Error! Something with pi is wrong")}
-    
-    for(k in 1:K){
-      #print(k)
-      zhat_k <- Zhat[,k]
-      which_vals <- which(zhat_k>.001)
-      if(length(which_vals)==0){which_vals <- 1:I}
-      obj <- function(par){
-        lik_term <- sum(unlist(lapply(which_vals,function(i){
-          zhat_k[i]*dbtlb(Pi=matrix(Pi[i,],nrow=1),X=matrix(X[i,],nrow=1),p=par[1:J],theta=par[J+1],M=M,log=TRUE)
-        })))
-        prior_term <- sum(dbeta(par[1:J],a,b,log=TRUE))+dgamma(par[J+1],gamma1,gamma2,log=TRUE)
-        return(-lik_term-prior_term)
-      }
-      ptheta[,k] <- optim(ptheta[,k],obj,method="L-BFGS-B",lower=rep(0.00001,J+1),upper=c(rep(1-.00001,J),qgamma(.9999,gamma1,gamma2)),
-                          control=list(maxit=nsteps*5))$par
-    }
-    
+  # function to calculate objective function
+  get_obj <- function(ptheta,pi){
     lik_terms <- matrix(NA,nrow=I,ncol=K)
     for(k in 1:K){
       pk <- ptheta[1:J,k]
@@ -146,17 +106,84 @@ map_btlb <- function(K,Pi,X,M,Pi_full=NULL,gamma,a,b,gamma1,gamma2,tol=1,maxit=5
     lik_term <- sum(apply(lik_terms,1,logSumExp))
     prior_term <- log(ddirichlet(pi,rep(gamma,K)))+sum(dbeta(ptheta[1:J,],a,b,log=TRUE))+
       sum(dgamma(ptheta[J+1,],gamma1,gamma2,log=TRUE))
-    newobj <- lik_term+prior_term
-    diff <- abs(newobj - currobj)
-    
-    print(paste0("Loglikelihood changed by: ",round(diff,2)))
-    currobj <- newobj
-    nsteps <- nsteps+1
-    #print(ptheta)
+    currobj <- lik_term+prior_term
+    return(currobj)
   }
   
-  list(phat=ptheta[1:J,],thetahat=ptheta[J+1,],pihat=pi,zhat=Zhat,obj=currobj)
+  # model constants
+  I <- nrow(X)
+  J <- ncol(X)
+  
+  # initializers
+  if(!is.null(seed)){set.seed(seed)}
+  pi <- rep(1/K,K)
+  ptheta <- matrix(c(rbeta(J*K,a,b),rgamma(K,gamma1,gamma2)),byrow=TRUE,nrow=J+1,ncol=K)
+  Z <- matrix(NA,nrow=I,ncol=K)
+  
+  #get current loglikelihood
+  curr_obj <- get_obj(ptheta,pi)
+  
+  currdiff <- Inf
+  iter <- 0
+  while(currdiff>tol & iter<=maxit){
+    iter <- iter + 1
+    
+    # E-Step: Update Z
+    t1 <- Sys.time()
+    for(i in 1:I){
+      lprobs <- unlist(lapply(1:K,function(k){
+        log(pi[k])+dbtlb(Pi=matrix(Pi[i,],nrow=1),X=matrix(X[i,],nrow=1),p=ptheta[1:J,k],
+                         theta=ptheta[J+1,k],M=M,log=T)
+      }))
+      Z[i,] <- exp(lprobs-logSumExp(lprobs))
+    }
+
+    
+    # M-Step:
+    ## Update (p,theta)
+    t2 <- Sys.time()
+    for(k in 1:K){
+      #print(k)
+      zhat_k <- Z[,k]
+      if(length(which_vals)==0){which_vals <- 1:I}
+      obj <- function(par){
+        worthk <- exp(-par[1:J]*par[J+1])
+        lik_term <- sum(unlist(lapply(which_vals,function(i){
+          zhat_k[i]*(dbtl(Pi=Pi[i,],worth=worthk,log=T)+sum(dbinom(X[i,],M,par[1:J],log=T)))
+        })))
+        prior_term <- sum(dbeta(par[1:J],a,b,log=TRUE))+dgamma(par[J+1],gamma1,gamma2,log=TRUE)
+        return(-lik_term-prior_term)
+      }
+      ptheta[,k] <- optim(ptheta[,k],obj,method="L-BFGS-B",lower=rep(0.00001,J+1),upper=c(rep(1-.00001,J),qgamma(.9999,gamma1,gamma2)))$par
+    }
+    
+    ## Update pi
+    t3 <- Sys.time()
+    pi <- (gamma-1+apply(Z,2,sum))/(I - K + gamma*K)
+    if(round(sum(pi),5)!=1){print("Error! Something with pi is wrong")}
+
+   
+    # Iteration Updates
+    t4 <- Sys.time()
+    new_obj <- get_obj(ptheta,pi)
+    currdiff <- new_obj-curr_obj
+    curr_obj <- new_obj
+    t5 <- Sys.time()
+    
+    if(verbose){
+      print(paste0("End of Iteration ",iter))
+      print("Time to update Z, ptheta,pi,objective: ")
+      print(round(c(t2-t1,t3-t2,t4-t3,t5-t4),2))
+      print(paste0("Difference: ",round(currdiff,3)))
+    }
+  }
+  
+  return(list(p=ptheta[1:J,],theta=ptheta[J+1,],pihat=pi,Z=Z,obj=curr_obj))
+  
 }
+
+map_btlb(Pi,X,M,K=2,gamma=gamma,a=a,b=b,gamma1=gamma1,gamma2=gamma2,seed=2)
+
 
 #### MAP Sandbox ####
 #set.seed(1)
@@ -549,8 +576,8 @@ lambda <- 7
 gamma_hyp1 <- 2
 gamma_hyp2 <- 2
 
-hist(rgamma(10000,gamma_hyp1,gamma_hyp2),main="Prior Histogram on Gamma",xlab="gamma")
-hist(rpois(10000,lambda)+1,main="Prior Histogram on K",xlab="K")
+# hist(rgamma(10000,gamma_hyp1,gamma_hyp2),main="Prior Histogram on Gamma",xlab="gamma")
+# hist(rpois(10000,lambda)+1,main="Prior Histogram on K",xlab="K")
 plot_Kplus <- matrix(NA,nrow=0,ncol=3)
 for(gamma in c(0.01,0.5,1,2,3,4)){
   print(gamma)
@@ -577,47 +604,37 @@ p1
 #                 startK=5,max_iters=2,mh_iters=2,burn=0,thin=1,seed)
 
 
-#load("/Users/pearce790/Desktop/sushi_mfmm_TS_startK1_iters1000_seed1.RData")
+load("/Users/pearce790/Desktop/sushi_mfmm_TS_startK1_iters1000_seed1.RData")
 res <- posterior
 rm(posterior)
 
 
 p2<-ggplot(data=data.frame(Kplus=res$Kplus),aes(Kplus,y=..density..))+
-  geom_histogram(breaks=c(8.5,9.5))+xlim(c(8,10))+
+  geom_histogram()+
+  #geom_histogram(breaks=c(8.5,9.5))+xlim(c(8,10))+
   xlab(expression("K+"))+ylab("Density")
 p3<-ggplot(data=data.frame(gamma=res$gamma),aes(x=gamma,y=..density..))+
-  geom_histogram(bins=20)+xlim(c(0,5))+ylab("Density")+
-  xlab(expression(gamma))
+  #xlim(c(0,5))+
+  geom_histogram(bins=20)+ylab("Density")+xlab(expression(gamma))
+grid.arrange(p2,p3,nrow=1)
 # ggsave("~/Desktop/res1_Sushi.pdf",grid.arrange(p2,p3,nrow=1),
 #        width=11,height=4)
 
 
+Zhat <- salso(x=res$Z[seq(1,5000,length=1000),seq(1,5000,length=500)],
+              loss="binder",maxNClusters=max(res$Z))
+sumZhat <- summary(Zhat)
+plotZhat <- melt(sumZhat$psm[sumZhat$order,rev(sumZhat$order)])
+p4 <- ggplot(plotZhat,aes(x=Var1,y=Var2,fill=value))+
+  geom_tile()+
+  scale_x_continuous(breaks=NULL,expand = c(0, 0))+
+  scale_y_continuous(breaks=NULL,expand = c(0, 0))+
+  labs(fill="Cluster\nSimilarity")+theme_bw()+
+  xlab(NULL)+ylab(NULL)
+# ggsave("~/Desktop/res2_Sushi.pdf",p4,width=8,height=7)
 
-Z <- res$Z
-Zhat <- apply(Z,2,function(z){
-  as.numeric(names(table(z))[which.max(table(z))])
-})
-class_order <- as.numeric(names(rev(sort(table(Zhat)))))
-sorted_i <- c()
-for(class in class_order){
-  sorted_i <- c(sorted_i,which(Zhat == class))
-}
-plotZ <- matrix(NA,nrow=5000,ncol=5000)
-for(ind1 in 1:5000){
-  i1 <- sorted_i[ind1]
-  for(ind2 in 1:5000){
-    i2 <- sorted_i[ind2]
-    plotZ[ind1,ind2] <- mean(Z[,i1]==Z[,i2])
-  }
-}
-plotZ2 <- sort(sample(1:5000,1000,replace=TRUE))
-plotZ2 <- plotZ[plotZ2,plotZ2]
-plotZ2 <- reshape2::melt(plotZ2)
-p4 <- ggplot(plotZ2,aes(Var1,Var2,fill=value))+geom_tile()+
-  labs(fill="Similarity")+xlab("Respondents")+ylab("Respondents")+
-  theme(legend.position="right")+
-  scale_x_continuous(breaks=NULL)+scale_y_continuous(breaks=NULL)
-ggsave("~/Desktop/res2_Sushi.pdf",p4,width=6,height=5)
+
+
 
 
 # 
