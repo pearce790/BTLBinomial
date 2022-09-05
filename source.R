@@ -72,24 +72,8 @@ rbtlb <- function(I,p,theta,M,R=length(p)){
 }
 
 #### MAP Estimation ####
-set.seed(1)
-J <- 10
-M <- 4
-dat1 <- rbtlb(I=20,p=runif(J),theta=10,M=M)
-dat2 <- rbtlb(I=10,p=runif(J),theta=20,M=M)
-X <- rbind(dat1$X,dat2$X)
-Pi <- rbind(dat1$Pi,dat2$Pi)
-rm(dat1,dat2,J)
-Pi_full <- NULL
-K <- 3
-gamma <- 1
-a <- 1
-b <- 1
-gamma1 <- 10
-gamma2 <- 0.5
-
-map_btlb <- function(Pi,X,M,Pi_full=NULL,K,gamma,
-                     a,b,gamma1,gamma2,tol=1,maxit=50,verbose=TRUE,seed=NULL){
+map_btlb <- function(Pi,X,M,Pi_full=NULL,K,gamma,a,b,gamma1,gamma2,
+                     tol=1,maxit=50,verbose=TRUE,seed=NULL){
   
   
   # function to calculate objective function
@@ -133,7 +117,7 @@ map_btlb <- function(Pi,X,M,Pi_full=NULL,K,gamma,
     for(i in 1:I){
       lprobs <- unlist(lapply(1:K,function(k){
         log(pi[k])+dbtlb(Pi=matrix(Pi[i,],nrow=1),X=matrix(X[i,],nrow=1),p=ptheta[1:J,k],
-                         theta=ptheta[J+1,k],M=M,log=T)
+                         theta=ptheta[J+1,k],M=M,log=T,Pi_full=Pi_full[i,])
       }))
       Z[i,] <- exp(lprobs-logSumExp(lprobs))
     }
@@ -145,11 +129,12 @@ map_btlb <- function(Pi,X,M,Pi_full=NULL,K,gamma,
     for(k in 1:K){
       #print(k)
       zhat_k <- Z[,k]
-      if(length(which_vals)==0){which_vals <- 1:I}
+      # which_vals <- which(zhat_k>.001)
+      # if(length(which_vals)==0){which_vals <- 1:I}
       obj <- function(par){
         worthk <- exp(-par[1:J]*par[J+1])
-        lik_term <- sum(unlist(lapply(which_vals,function(i){
-          zhat_k[i]*(dbtl(Pi=Pi[i,],worth=worthk,log=T)+sum(dbinom(X[i,],M,par[1:J],log=T)))
+        lik_term <- sum(unlist(lapply(1:I,function(i){
+          zhat_k[i]*(dbtl(Pi=Pi[i,],worth=worthk,log=T,Pi_full=Pi_full[i,])+sum(X[i,]*log(par[1:J])+(M-X[i,])*log(1-par[1:J])))
         })))
         prior_term <- sum(dbeta(par[1:J],a,b,log=TRUE))+dgamma(par[J+1],gamma1,gamma2,log=TRUE)
         return(-lik_term-prior_term)
@@ -182,11 +167,9 @@ map_btlb <- function(Pi,X,M,Pi_full=NULL,K,gamma,
   
 }
 
-map_btlb(Pi,X,M,K=2,gamma=gamma,a=a,b=b,gamma1=gamma1,gamma2=gamma2,seed=2)
-
 
 #### MAP Sandbox ####
-#set.seed(1)
+set.seed(1)
 J <- 10
 M <- 4
 dat1 <- rbtlb(I=20,p=runif(J),theta=10,M=M)
@@ -194,17 +177,14 @@ dat2 <- rbtlb(I=10,p=runif(J),theta=20,M=M)
 X <- rbind(dat1$X,dat2$X)
 Pi <- rbind(dat1$Pi,dat2$Pi)
 rm(dat1,dat2,J)
-Pi_full <- Pi
+Pi_full <- NULL
+K <- 2
 gamma <- 1
 a <- 1
 b <- 1
 gamma1 <- 10
 gamma2 <- 0.5
-K <- 2
-tol <- 1
-maxit <- 50
-
-map_btlb(2,Pi,X,M,Pi_full=NULL,gamma,a,b,gamma1,gamma2,tol=.01,maxit=50)$obj
+map_btlb(Pi=Pi,X=X,M=M,Pi_full=Pi_full,K=K,gamma=gamma,a=a,b=b,gamma1=gamma1,gamma2=gamma2,seed=1)
 
 
 #### MFMM Estimation ####
@@ -436,125 +416,6 @@ ggplot(plot_p,aes(x=Var3,y=value,group=jk,color=factor(jk)))+
   ggtitle("Trace Plot: p")
 
 
-
-
-#### AIBS Example ####
-
-load("/Users/pearce790/Desktop/Elena Errant Files/Experiments/Panel2_2021.RData")
-coi <- coi2
-X <- as.matrix(X2)
-Pi <- as.matrix(Pi2)
-M <- 40
-J <- ncol(X)
-Pi_full <- matrix(NA,nrow=nrow(X),ncol=J)
-for(i in 1:nrow(X)){
-  tmp <- na.exclude(c(Pi[i,],setdiff(1:J,c(Pi[i,],which(coi[i,]==1)))))
-  Pi_full[i,1:length(tmp)] <- tmp
-}
-fit <- fitdistrplus::fitdist(data=as.vector(na.exclude(c(X)))/40,distr="beta",method="mme")
-a <- as.numeric(fit$estimate[1])
-b <- as.numeric(fit$estimate[2])
-gamma1 <- 10
-gamma2 <- 0.5
-rm(coi,coi2,fit,Pi2,X2,i,J,tmp,Proposals2,Reviewers2)
-
-gamma_hyp1 <- 3
-gamma_hyp2 <- 2
-lambda <- 1
-
-
-#hist(rgamma(1000,gamma_hyp1,gamma_hyp2),main="Prior Histogram on Gamma",xlab="gamma")
-#hist(rpois(1000,lambda)+1,main="Prior Histogram on K",xlab="K")
-plot_Kplus <- matrix(NA,nrow=0,ncol=3)
-for(gamma in c(0.01,1,2,3)){
-  pmfstatic2 <- nClusters(Kplus=1:6,N=nrow(X),type="static",gamma=gamma,maxK=50)
-  dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = lambda))
-  plot_Kplus <- rbind(plot_Kplus,matrix(c(rep(gamma,6),1:6,dens),ncol=3))
-}
-plot_Kplus <- as.data.frame(plot_Kplus)
-names(plot_Kplus) <- c("gamma","K+","density")
-plot_Kplus$gamma <- factor(plot_Kplus$gamma)
-levels(plot_Kplus$gamma) <- c(expression("gamma: 0.01"),expression("gamma: 1"),
-                              expression("gamma: 2"),expression("gamma: 3"))
-p1 <- ggplot(plot_Kplus,aes(`K+`,density))+geom_line()+geom_point()+
-  facet_wrap(. ~gamma,labeller = label_parsed)+
-  scale_x_continuous(breaks=1:10)+ylab("Prior Density")
-p1
-#ggsave("~/Desktop/PriorKplus_AIBS.pdf",p1,)
-
-
-res <- btlb_mfm(Pi=Pi,X=X,M=M,Pi_full=Pi_full,
-                lambda=lambda,a=a,b=b,gamma1=gamma1,gamma2=gamma2,
-                gamma_hyp1=gamma_hyp1,gamma_hyp2=gamma_hyp2,
-                mh_pjk = .05, mh_thetak = 5, mh_gamma = 1,
-                startK=17,max_iters=1000,mh_iters=10,burn=.50,thin=5,
-                seed = 1)
-
-
-p1<-ggplot(data=data.frame(Kplus=res$Kplus),aes(Kplus))+
-  geom_histogram(breaks=c(1.75,2.25,2.75,3.25))+
-  scale_x_continuous(breaks=c(2,3))+
-  xlab(expression("K+"))+ylab("Density")+
-  scale_y_continuous(breaks=seq(0,1000,length=11),labels=c(seq(0,1,length=11)))
-p2<-ggplot(data=data.frame(gamma=res$gamma),aes(x=gamma,y=..density..))+
-  geom_histogram(bins=25)+xlim(c(0,4))+ylab("Density")+
-  xlab(expression(gamma))
-plotZ <- reshape2::melt(res$Z[res$Kplus != 3,])
-plotZ$value <- factor(plotZ$value,levels=2:1,labels=1:2)
-p3<-ggplot(data=plotZ,aes(Var2,fill=factor(value)))+
-  geom_bar()+xlab("Judge")+ylab("Density")+
-  scale_x_continuous(breaks=1:17)+
-  scale_y_continuous(breaks=seq(0,max(plotZ$Var1),length=11),labels=seq(0,1,length=11))+
-  labs(fill="Cluster")
-
-plot_p <- na.exclude(reshape2::melt(res$p[,1:2,res$Kplus %in% c(1,2)]))
-plot_p$Var2 <- factor(plot_p$Var2,levels=2:1,labels=1:2)
-p4<-ggplot(plot_p,aes(x=factor(Var1),y=value,fill=factor(Var2)))+geom_violin()+
-  theme(legend.position="none")+ylim(c(0,1))+
-  xlab("Item Quality Parameter")+ylab("Density")
-plot_theta <- na.exclude(reshape2::melt(res$theta[res$Kplus %in% c(1,2),1:2]))
-plot_theta$Var2 <- factor(plot_theta$Var2,levels=2:1,labels=1:2)
-p5<-ggplot(plot_theta,aes(x=factor(Var2),y=value,fill=factor(Var2)))+geom_violin()+
-  ylim(c(0,40))+xlab(expression(theta))+ylab("Density")+labs(fill="Cluster")
-
-grid.arrange(p2,p1,p3,nrow=1,widths=c(0.25,0.25,0.5))
-grid.arrange(p4,p5,nrow=1,widths=c(.8,0.2))
-# ggsave("~/Desktop/AIBS_res1.pdf",grid.arrange(p2,p1,p3,nrow=1,widths=c(0.25,0.25,0.5)),
-#        width=11,height=4)
-# ggsave("~/Desktop/AIBS_res2.pdf",grid.arrange(p4,p5,nrow=1,widths=c(0.8,0.2)),
-#        width=11,height=4)
-
-
-View(plot_p %>% group_by(Var1,Var2) %>%summarize(mean(value)))
-plot_theta %>% group_by(Var2) %>% summarize(mean(value))
-
-par(mfrow=c(2,3))
-plot(res$accept_p,ylim=c(0,1),type="l",ylab="Accept Prob for p")
-plot(res$accept_theta,ylim=c(0,1),type="l",ylab="Accept Prob for theta")
-plot(res$accept_gamma,ylim=c(0,1),type="l",ylab="Accept Prob for gamma")
-plot(res$K,type="l",ylim=c(1,max(res$K,res$Kplus)),ylab="K")
-plot(res$Kplus,type="l",ylim=c(1,max(res$K,res$Kplus)),ylab="Kplus")
-plot(res$gamma,type="l",ylim=c(0,max(res$gamma)+1),ylab="gamma")
-ggplot(reshape2::melt(res$pi),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
-  geom_line()+ylim(c(0,1))+theme(legend.position="bottom")+
-  ylab("Class Proportion Estimate")+xlab("Iteration (after burn/thin)")+
-  labs(color="Class")+ggtitle("Trace Plot: Class Proportions, pi")
-ggplot(reshape2::melt(res$Z),aes(x=Var1,y=jitter(value,.5),group=Var2,color=factor(Var2)))+
-  geom_line()+theme(legend.position="none")+ylim(c(0,max(res$Kplus)+1))+
-  ylab("Class Membership Indicators")+xlab("Iteration (after burn/thin)")+
-  labs(color="Class")+ggtitle("Trace Plot: Class Memberships, Z")
-ggplot(reshape2::melt(res$theta),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
-  geom_line()+theme(legend.position="bottom")+ylim(c(0,max(res$theta)+1))+
-  ylab("theta")+xlab("Iteration (after burn/thin)")+
-  labs(color="Class")+ggtitle("Trace Plot: theta")
-plot_p <- reshape2::melt(res$p)
-plot_p$jk <- as.factor(paste0(plot_p$Var1,"_",plot_p$Var2))
-ggplot(plot_p,aes(x=Var3,y=value,group=jk,color=factor(Var2)))+
-  facet_wrap(vars(Var1))+
-  geom_line()+theme(legend.position="bottom")+ylim(c(0,1))+
-  ylab("p")+xlab("Iteration (after burn/thin)")+
-  labs(color="Class")+ggtitle("Trace Plot: p")
-#save.image("~/BTLBinomial/AIBS_Panel2_res.RData")
 
 
 #### Sushi Example ####
