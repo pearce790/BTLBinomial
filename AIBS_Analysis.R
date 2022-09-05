@@ -1,4 +1,5 @@
 #### AIBS Reproducibility ####
+source("~/BTLBinomial/source.R")
 
 ## Load Data and Choose Hyperparameters
 load("AIBS_2021Panel2.RData")
