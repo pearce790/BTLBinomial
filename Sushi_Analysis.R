@@ -4,6 +4,40 @@ source("~/BTLBinomial/source.R")
 #### Load Data and Choose Hyperparameters ####
 load("~/BTLBinomial/Sushi.RData")
 
+#### EDA ####
+plotX <- melt(X)
+names(plotX) <- c("ID","Sushi Type","Rating")
+plotX$`Sushi Type` <- factor(plotX$`Sushi Type`,levels=paste0("Item",1:10),
+                             labels=c("Shrimp","Sea Eel","Tuna","Squid","Sea Urchin",
+                                      "Salmon Roe","Egg","Fatty Tuna","Tuna Roll","Cucumber Roll"))
+plotX$`Sushi Type` <- factor(plotX$`Sushi Type`,levels=c("Fatty Tuna","Tuna","Shrimp","Tuna Roll","Sea Eel","Salmon Roe",
+                                                         "Squid","Egg","Sea Urchin","Cucumber Roll"))
+p1 <- ggplot(plotX,aes(x=`Sushi Type`,y=Rating))+geom_jitter(size=.2)+xlab(NULL)+
+  scale_y_continuous(breaks=0:4,labels=paste0(" ",0:4))
+
+plotPi <- melt(Pi)
+names(plotPi) <- c("ID","Rank","Sushi Type")
+plotPi$`Sushi Type` <- factor(plotPi$`Sushi Type`,levels=paste0(1:10),
+                             labels=c("Shrimp","Sea Eel","Tuna","Squid","Sea Urchin",
+                                      "Salmon Roe","Egg","Fatty Tuna","Tuna Roll","Cucumber Roll"))
+plotPi$`Sushi Type` <- factor(plotPi$`Sushi Type`,levels=c("Fatty Tuna","Tuna","Shrimp","Tuna Roll","Sea Eel","Salmon Roe",
+                                                         "Squid","Egg","Sea Urchin","Cucumber Roll"))
+plotPi$Rank <- factor(plotPi$Rank,levels=paste0("Place",10:1),labels=rev(c("First","Second","Third","Fourth","Fifth",
+                                                                       "Sixth","Seventh","Eighth","Ninth","Tenth")))
+p2 <- ggplot(plotPi,aes(x=`Sushi Type`,value=Rank,color=Rank,fill=Rank))+geom_bar(stat="count")+
+  theme(legend.position = "bottom")+ylab("Count")+
+  scale_fill_manual(values=c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7","#000000","#555555","#999999"),
+                    breaks=c("First","Second","Third","Fourth","Fifth","Sixth","Seventh","Eighth","Ninth","Tenth"))+
+  scale_color_manual(values=c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7","#000000","#555555","#999999"),
+                     breaks=c("First","Second","Third","Fourth","Fifth","Sixth","Seventh","Eighth","Ninth","Tenth"))+
+  guides(color = guide_legend(nrow = 1),fill = guide_legend(nrow=1))+
+  scale_y_continuous(breaks=seq(0,5000,length=6),labels=c("0",paste0(1:5,"k")))
+grid.arrange(p1,p2,nrow=2,heights=c(.45,.55))
+ggsave("Results_Plots/Sushi_EDA.pdf",grid.arrange(p1,p2,nrow=2,heights=c(.45,.55)),
+       width=11,height=8)
+
+
+
 
 #### Explore Influence of Hyperparameters on K and K+ ####
 plot_Kplus <- matrix(NA,nrow=0,ncol=3)
@@ -63,10 +97,16 @@ plot_theta <- reshape2::melt(res$theta[,1:9])
 plot_theta$Var2 <- factor(plot_theta$Var2)
 TopTypes <- plot_p %>% group_by(Var1,Var2) %>% summarize(mean(value))
 names(TopTypes) <- c("Type","Cluster","Posterior Mean p")
-SummaryTheta <- plot_theta %>% group_by(Var2) %>% summarize(mean(value))
-names(SummaryTheta) <- c("Cluster","Posterior Mean theta")
-print(n=27,TopTypes[,c(2,1,3)] %>% group_by(Cluster) %>% slice_min(order_by = `Posterior Mean p`, n = 3))
-SummaryTheta
+SummaryTopTypes <- TopTypes[,c(2,1,3)] %>% group_by(Cluster) %>% slice_min(order_by = `Posterior Mean p`, n = 3)
+
+sum_table <- data.frame(Cluster=1:9,Pi=round(apply(res$pi,2,mean)[1:9],3),Top3=NA,Theta=round(apply(res$theta,2,mean)[1:9],2))
+for(Cluster in 1:9){
+  sum_table[Cluster,"Top3"] <- paste0(unlist(c(SummaryTopTypes[SummaryTopTypes$Cluster == Cluster,"Type"])),collapse=", ")
+}
+
+print(xtable::xtable(sum_table,caption="Sushi Analysis Results"),include.rownames=FALSE)
+
+
 
 
 Zhat <- salso(x=res$Z[round(seq(1,5000,length=1000)),seq(1,5000,length=500)],

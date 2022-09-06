@@ -12,6 +12,33 @@ gamma_hyp1 <- 3
 gamma_hyp2 <- 2
 lambda <- 1
 
+#### EDA ####
+plotX <- melt(X)
+names(plotX) <- c("ID","Proposal","Rating")
+plotX$Proposal <- factor(plotX$Proposal)
+p1<-ggplot(plotX,aes(x=Proposal,y=Rating))+geom_boxplot()+xlab(NULL)+
+  scale_y_continuous(breaks=seq(0,40,by=5),labels=paste0(" ",seq(0,40,by=5)),limits = c(0,40))
+
+plotPi <- melt(Pi)
+names(plotPi) <- c("ID","Rank","Proposal")
+plotPi$Proposal <- factor(plotPi$Proposal,levels=1:25)
+plotPi$Rank <- factor(plotPi$Rank,levels=6:1,labels=rev(c("First","Second","Third","Fourth","Fifth","Sixth")))
+plotPi <- na.exclude(plotPi)
+p2<-ggplot(plotPi,aes(x=Proposal,value=Rank,color=Rank,fill=Rank))+geom_bar(stat="count")+
+  theme(legend.position = "bottom")+ylab("Count")+
+  scale_fill_manual(values=c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7","#000000","#555555","#999999"),
+                    breaks=c("First","Second","Third","Fourth","Fifth","Sixth","Seventh","Eighth","Ninth","Tenth"))+
+  scale_color_manual(values=c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7","#000000","#555555","#999999"),
+                     breaks=c("First","Second","Third","Fourth","Fifth","Sixth","Seventh","Eighth","Ninth","Tenth"))+
+  guides(color = guide_legend(nrow = 1),fill = guide_legend(nrow=1))+
+  scale_y_continuous(breaks=0:17,limits=c(0,17))+scale_x_discrete(drop=FALSE)
+grid.arrange(p1,p2,nrow=2,heights=c(.45,.55))
+ggsave("Results_Plots/AIBS_EDA.pdf",grid.arrange(p1,p2,nrow=2,heights=c(.45,.55)),
+       width=11,height=8)
+
+
+
+
 #### Explore Influence of Hyperparameters on K and K+ ####
 plot_Kplus <- matrix(NA,nrow=0,ncol=3)
 for(gamma in c(0.01,1,2,3)){
