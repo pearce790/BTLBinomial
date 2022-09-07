@@ -346,7 +346,7 @@ btlb_mfm <- function(Pi,X,M,Pi_full=NULL,lambda,a,b,gamma1,gamma2,gamma_hyp1,gam
               max_iters=max_iters,mh_iters=mh_iters,burn=burn,thin=thin,seed=seed))
 }
 
-# Fixed K Estimation
+# Finite Mixture (Fixed K) Estimation
 btlb_fm <- function(Pi,X,M,Pi_full=NULL,K,a,b,gamma1,gamma2,gamma_hyp1,gamma_hyp2,
                     mh_pjk = 0.01, mh_thetak = 1, mh_gamma = 0.1,
                     max_iters = 100, mh_iters = 5, burn = 0.5, thin = 2, seed = NULL){
@@ -465,7 +465,6 @@ btlb_fm <- function(Pi,X,M,Pi_full=NULL,K,a,b,gamma1,gamma2,gamma_hyp1,gamma_hyp
     
     ## Step 4: Update pi
     pi <- c(rdirichlet(1,gamma+Nk))
-    
     if(length(pi)!=K | length(Nk)!=K | ncol(ptheta)!=K ){stop("something wrong!")}
     
     ## Save Values and Update Counter
@@ -495,38 +494,605 @@ btlb_fm <- function(Pi,X,M,Pi_full=NULL,K,a,b,gamma1,gamma2,gamma_hyp1,gamma_hyp
 
 #### BTL-B Examples ####
 
-# data generation
-set.seed(1)
-M <- 4
-dat1 <- rbtlb(I=20,p=runif(10),theta=10,M=M)
-dat2 <- rbtlb(I=10,p=runif(10),theta=20,M=M)
-X <- rbind(dat1$X,dat2$X)
-Pi <- rbind(dat1$Pi,dat2$Pi)
-rm(dat1,dat2)
+if(FALSE){ #change to "TRUE" to run
+  
+  # data generation
+  set.seed(1)
+  M <- 4
+  dat1 <- rbtlb(I=20,p=runif(10),theta=10,M=M)
+  dat2 <- rbtlb(I=10,p=runif(10),theta=20,M=M)
+  X <- rbind(dat1$X,dat2$X)
+  Pi <- rbind(dat1$Pi,dat2$Pi)
+  rm(dat1,dat2)
+  
+  # density functions
+  dbtlb(Pi=Pi,X=X,p=runif(ncol(X)),theta=10,M=M,log=TRUE)
+  dbtl(Pi=Pi,worth=exp(-10*runif(ncol(X))),log=TRUE)
+  
+  # map
+  map <- btlb_map(Pi=Pi,X=X,M=M,Pi_full=NULL,K=2,
+                  gamma=1,a=2,b=2,gamma1=10,gamma2=.5,
+                  tol=.01,maxit=50,verbose=TRUE,seed=1)
+  
+  # calculation of prior on K+
+  pmfstatic2 <- nClusters(Kplus=1:5,N=nrow(X),type="static",gamma=1,maxK=20)
+  dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = 1))
+  ggplot(data.frame(K=1:length(dens),Mass=dens),aes(K,Mass))+geom_line()+geom_point()+
+    ylab("Prior Mass on K+")+xlab("K+")
+  
+  # mfm
+  mfm <- btlb_mfm(Pi=Pi,X=X,M=M,Pi_full=NULL,lambda=1,a=2,b=2,gamma1=10,gamma2=.5,gamma_hyp1=2,gamma_hyp2=2,
+                  startK = 1, mh_pjk = 0.01, mh_thetak = 1, mh_gamma = 0.1,
+                  max_iters = 200, mh_iters = 5, burn = 0.5,thin = 2,seed = 1)
+  
+  # fixed K
+  fm <- btlb_fm(Pi=Pi,X=X,M=M,Pi_full=NULL,K=2,
+                a=2,b=2,gamma1=10,gamma2=.5,gamma_hyp1=2,gamma_hyp2=2,
+                mh_pjk = 0.01, mh_thetak = 1, mh_gamma = 0.1,
+                max_iters = 200, mh_iters = 5, burn = 0.5, thin = 2, seed = 1)
+}
 
-# density functions
-dbtlb(Pi=Pi,X=X,p=runif(ncol(X)),theta=10,M=M,log=TRUE)
-dbtl(Pi=Pi,worth=exp(-10*runif(ncol(X))),log=TRUE)
+#### MB Functions ####
 
-# map
-map <- btlb_map(Pi=Pi,X=X,M=M,Pi_full=NULL,K=2,
-                gamma=1,a=2,b=2,gamma1=10,gamma2=.5,
+# Random Data Generation
+rmallow <- function(I,pi0,theta,R=length(pi0)){
+  tmp<-function(pi0,theta){
+    J<-length(pi0)
+    Vj <- pi1 <- c()
+    for(j in 1:(J-1)){
+      probs <- exp(-theta*(0:(J-j)))/sum(exp(-theta*(0:(J-j))))
+      Vj <- c(Vj,sample.int(J-j+1,size=1,prob=probs)-1)
+    }
+    Vj <- c(Vj, 0)
+    for(j in 1:J){
+      pi1 <- c(pi1, pi0[Vj[j]+1])
+      pi0 <- setdiff(pi0, pi0[Vj[j]+1])
+    }
+    return(pi1)
+  }
+  Pi <- t(replicate(I, tmp(pi0, theta)))[,1:R]
+  if(I==1){Pi <- matrix(Pi,nrow=1,ncol=R)}
+  return(Pi)
+}
+rmb <- function(I,p,pi0=NULL,theta,M,R=length(p)){
+  J <- length(p)
+  X <- as.matrix(t(replicate(I, rbinom(n = J, size = M, prob = p))))
+  
+  ties <- length(setdiff(1:J,rank(p,ties.method="min")))>0
+  if(ties & is.null(pi0)){stop("Ties present in p. Set pi0 to break ties")}
+  if(ties & !is.null(pi0)){if(any(diff(p[pi0])<0)){stop("pi0 is incompatible with p")}}
+  if(!ties & is.null(pi0)){pi0 <- order(p)}
+  if(!ties & !is.null(pi0)){if(any(order(p)!=pi0)){stop("pi0 is incompatible with p")}}
+  
+  Pi <- rmallow(I=I,pi0=pi0,theta=theta,R=R)
+  return(list(X=X,Pi=Pi))
+}
+
+# Density Functions
+dmb <- function (Pi, X, p, pi0 = NULL, theta, M, log = FALSE){
+  
+  #check data format (Pi is checked by dmallow function called herein)
+  if(is.vector(X)){X <- matrix(X,nrow=1)}
+  if(!is.matrix(X)){stop("X must be a matrix of ratings")}
+  if(length(p)!=ncol(X)){stop("length(p) must equal ncol(X)")}
+  
+  if(length(p)!=ncol(X)){stop("p must equal ncol(X)")}
+  ties <- length(setdiff(1:ncol(X),rank(p,ties.method="min")))>0
+  if(ties & is.null(pi0)){stop("Ties present in p. Set pi0 to break ties")}
+  if(ties & !is.null(pi0)){if(any(diff(p[pi0])<0)){stop("pi0 is incompatible with p")}}
+  if(!ties & is.null(pi0)){pi0 <- order(p)}
+  if(!ties & !is.null(pi0)){if(any(order(p)!=pi0)){stop("pi0 is incompatible with p")}}
+  
+  logd <- dmallow(Pi=Pi,pi0=pi0,theta=theta,log=T) + 
+    sum(apply(X, 1, function(x){dbinom(x, M, p, log = T)}), na.rm=T)
+  
+  if(log){return(logd)}else{return(exp(logd))}
+}
+dmallow <- function(Pi, pi0, theta, log = FALSE){
+  
+  if(is.vector(Pi)){Pi <- matrix(Pi,nrow=1)}
+  if(!is.matrix(Pi)){stop("Pi must be a matrix of (partial) rankings")}
+  
+  if(sum(apply(Pi,1,function(pi){!all(is.na(pi))}))==0){ #if all rankings empty, return likelihood of 1 (convenience)
+    if(log){return(0)}else{return(1)}
+  }
+  
+  J <- length(pi0)
+  R <- apply(Pi, 1, function(pi){length(na.exclude(pi))})
+  R[which(R == J - 1)] <- J
+  logd <- -theta * sum(apply(Pi, 1, function(pi){kendall(pi, pi0)})) - 
+    sum(unlist(lapply(R, function(r){psi(theta, J, r, log = T)})))
+  
+  if(log){return(logd)}else{return(exp(logd))}
+}
+kendall <- function(pi, pi0) {
+  pi <- na.exclude(as.vector(pi))
+  pi0 <- as.vector(pi0)
+  R <- length(pi)
+  J <- length(pi0)
+  if (length(setdiff(1:J, pi0)) != 0) {
+    stop("pi0 must be a complete ranking")
+  }
+  if (any(pi > J, na.rm = T)) {
+    stop("pi cannot contain items not in pi0")
+  }
+  if (R > J) {
+    stop("R must be <= J")
+  }
+  dist <- 0
+  for (r in 1:R) {
+    dist <- dist + (which(pi0 == pi[r]) - 1)
+    pi0 <- setdiff(pi0, pi[r])
+  }
+  return(dist)
+}
+psi <- function(theta, J, R, log = FALSE){
+  if (R > J) {
+    stop("R must be <= J")
+  }
+  if (R <= 0 | J <= 0) {
+    stop("R and J must be positive integers")
+  }
+  if (theta <= 0) {
+    stop("theta must be >=0")
+  }
+  log_psi <- sum(log((1 - exp(-theta * (J - 1:R + 1)))) - log((1 - 
+                                                                 exp(-theta))))
+  if (log) {
+    return(log_psi)
+  }
+  else {
+    return(exp(log_psi))
+  }
+}
+
+# MAP Estimation
+mb_map <- function(Pi,X,M,K,gamma,a,b,gamma1,gamma2,
+                     tol=1,maxit=50,verbose=TRUE,seed=NULL){
+  
+  
+  # function to calculate objective function
+  get_obj <- function(ptheta,pi){
+    lik_terms <- matrix(NA,nrow=I,ncol=K)
+    for(k in 1:K){
+      pk <- ptheta[1:J,k]
+      thetak <- ptheta[J+1,k]
+      lik_terms[,k] <- log(pi[k])+unlist(lapply(1:I,function(i){
+        dmb(Pi=Pi[i,],X=X[i,],p=pk,theta=thetak,M=M,log=T)
+      }))
+    }
+    lik_term <- sum(apply(lik_terms,1,logSumExp))
+    prior_term <- log(ddirichlet(pi,rep(gamma,K)))+sum(dbeta(ptheta[1:J,],a,b,log=TRUE))+
+      sum(dgamma(ptheta[J+1,],gamma1,gamma2,log=TRUE))
+    currobj <- lik_term+prior_term
+    return(currobj)
+  }
+  
+  # model constants
+  I <- nrow(X)
+  J <- ncol(X)
+  
+  # initializers
+  if(!is.null(seed)){set.seed(seed)}
+  pi <- rep(1/K,K)
+  ptheta <- matrix(c(rbeta(J*K,a,b),rgamma(K,gamma1,gamma2)),byrow=TRUE,nrow=J+1,ncol=K)
+  Z <- matrix(NA,nrow=I,ncol=K)
+  
+  #get current loglikelihood
+  curr_obj <- get_obj(ptheta,pi)
+  
+  currdiff <- Inf
+  iter <- 0
+  while(currdiff>tol & iter<=maxit){
+    iter <- iter + 1
+    
+    # E-Step: Update Z
+    t1 <- Sys.time()
+    for(i in 1:I){
+      lprobs <- unlist(lapply(1:K,function(k){
+        log(pi[k])+dmb(Pi=Pi[i,],X=X[i,],p=ptheta[1:J,k],theta=ptheta[J+1,k],M=M,log=T)
+      }))
+      Z[i,] <- exp(lprobs-logSumExp(lprobs))
+    }
+    
+    
+    # M-Step:
+    ## Update (p,theta)
+    t2 <- Sys.time()
+    for(k in 1:K){
+      #print(k)
+      zhat_k <- Z[,k]
+      # which_vals <- which(zhat_k>.001)
+      # if(length(which_vals)==0){which_vals <- 1:I}
+      obj <- function(par){
+        lik_term <- sum(unlist(lapply(1:I,function(i){
+          zhat_k[i]*dmb(Pi=Pi[i,],X=X[i,],p=par[1:J],theta=par[J+1],M=M,log=T)
+        })))
+        prior_term <- sum(dbeta(par[1:J],a,b,log=TRUE))+dgamma(par[J+1],gamma1,gamma2,log=TRUE)
+        return(-lik_term-prior_term)
+      }
+      ptheta[,k] <- optim(ptheta[,k],obj,method="L-BFGS-B",lower=seq(1e-8,1e-7,length=J+1),
+                          upper=c(1-seq(1e-8,1e-7,length=J),qgamma(.9999,gamma1,gamma2)))$par
+    }
+    
+    ## Update pi
+    t3 <- Sys.time()
+    pi <- (gamma-1+apply(Z,2,sum))/(I - K + gamma*K)
+    if(round(sum(pi),5)!=1){print("Error! Something with pi is wrong")}
+    
+    
+    # Iteration Updates
+    t4 <- Sys.time()
+    new_obj <- get_obj(ptheta,pi)
+    currdiff <- new_obj-curr_obj
+    curr_obj <- new_obj
+    t5 <- Sys.time()
+    
+    if(verbose){
+      print(paste0("End of Iteration ",iter))
+      print("Time to update Z, ptheta,pi,objective: ")
+      print(round(c(t2-t1,t3-t2,t4-t3,t5-t4),2))
+      print(paste0("Difference: ",round(currdiff,3)))
+    }
+  }
+  
+  return(list(p=ptheta[1:J,],theta=ptheta[J+1,],pihat=pi,Z=Z,obj=curr_obj))
+  
+}
+
+# MFM Estimation
+mb_mfm <- function(Pi,X,M,lambda,a,b,gamma1,gamma2,gamma_hyp1,gamma_hyp2,
+                     startK = 1, mh_pjk = 0.01, mh_thetak = 1, mh_gamma = 0.1,
+                     max_iters = 100, mh_iters = 5, burn = 0.5,thin = 2,seed = NULL){
+  
+  print("Initializing Chain")
+  if(!is.null(seed)){set.seed(seed)}
+  
+  ## Determine Constants
+  I <- nrow(X)
+  J <- ncol(X)
+  R <- ncol(Pi)
+  
+  ## Set Up Data Storage
+  which_keep <- seq(from=round(burn*max_iters*mh_iters),to=max_iters * mh_iters,by=thin)
+  K_all <- c()
+  Kplus_all <- c()
+  gamma_all <- c()
+  pi_all <- matrix(NA,nrow=length(which_keep),ncol=I)
+  p_all <- array(NA,dim=c(J,I,length(which_keep)))
+  theta_all <- matrix(NA,nrow=length(which_keep),ncol=I)
+  Z_all <- matrix(NA,nrow=length(which_keep),ncol=I)
+  accept_p <- c()
+  accept_theta <- c()
+  accept_gamma <- c()
+  
+  ## Initialize at Random
+  K <- startK
+  gamma <- rgamma(1,gamma_hyp1,gamma_hyp2)
+  pi <- c(rdirichlet(1,rep(gamma,K)))
+  ptheta <- matrix(NA,nrow=J+1,ncol=K)
+  for(k in 1:K){ptheta[,k] <- c(rbeta(J,a,b),rgamma(1,gamma1,gamma2))}
+  Z <- rep(NA,I)
+  
+  print("Starting Chain")
+  iter <- 1
+  progress_iters <- round(seq(0,max(which_keep),length=11))[-1]
+  while(iter <= max(which_keep)){
+    
+    ## Step 1: Update Labels
+    probs <- matrix(NA,nrow=I,ncol=K)
+    for(k in 1:K){
+      probs[,k] <- exp(log(pi[k])+unlist(lapply(1:I,function(i){
+        dmb(Pi=Pi[i,],X=X[i,],p=ptheta[1:J,k],theta=ptheta[J+1,k],M=M,log=T)
+      })))
+    }
+    Z <- apply(probs,1,function(prob){sample.int(K,1,prob=prob)})
+    Nk <- unlist(lapply(1:K,function(k){sum(Z==k)})) #update Nk, Kplus, and reorder
+    Kplus <- sum(Nk>0)
+    ptheta <- as.matrix(ptheta[,which(Nk>0)])
+    Ztmp <- Z
+    for(k in 1:K){Ztmp[which(Z==k)] <- which(c(which(Nk>0),setdiff(1:K,which(Nk>0)))==k)}
+    Z <- Ztmp
+    rm(Ztmp)
+    
+    
+    ## Step 2: Update non-empty component parameters
+    for(mh_iter in 0:(mh_iters-1)){
+      for(k in 1:Kplus){
+        whichk <- which(Z == k)
+        constant1 <- a+apply(matrix(X[whichk,],nrow=length(whichk)),2,sum,na.rm=T)-1
+        constant2 <- b+apply(M-matrix(X[whichk,],nrow=length(whichk)),2,sum,na.rm=T)-1
+        Pi_mat <- matrix(Pi[whichk,],nrow=length(whichk))
+        
+        for(j in 1:J){ #update each p_jk
+          prop_pjk <- rnorm(1,ptheta[j,k],mh_pjk)
+          while(prop_pjk<=0 | prop_pjk>=1){prop_pjk <- rnorm(1,ptheta[j,k],mh_pjk)}
+          prop_p <- ptheta[1:J,k]
+          prop_p[j] <- prop_pjk
+          prop_pi0 <- order(prop_p)
+          curr_pi0 <- order(ptheta[1:J,k])
+          if(any(prop_pi0!=curr_pi0)){
+            logprob_prop <- dmallow(Pi=Pi_mat,pi0=prop_pi0,theta=ptheta[J+1,k],log=T)+
+              (constant1[j])*log(prop_pjk)+(constant2[j])*log(1-prop_pjk)
+            logprob_curr <- dmallow(Pi=Pi_mat,pi0=curr_pi0,theta=ptheta[J+1,k],log=T)+
+              (constant1[j])*log(ptheta[j,k])+(constant2[j])*log(1-ptheta[j,k])
+          }else{
+            logprob_prop <- (constant1[j])*log(prop_pjk)+(constant2[j])*log(1-prop_pjk)
+            logprob_curr <- (constant1[j])*log(ptheta[j,k])+(constant2[j])*log(1-ptheta[j,k])
+          }
+          
+          u <- runif(1)
+          if(log(u) <  logprob_prop-logprob_curr){
+            accept_p <- c(accept_p,1)
+            ptheta[j,k] <- prop_pjk
+          }else{accept_p <- c(accept_p,0)}
+        }
+        #update theta_k
+        prop_thetak <- rnorm(1,ptheta[J+1,k],mh_thetak)
+        while(prop_thetak<=0){prop_thetak <- rnorm(1,ptheta[J+1,k],mh_thetak)}
+        curr_pi0 <- order(ptheta[1:J,k])
+        
+        
+        logprob_prop <- dmallow(Pi=Pi_mat,pi0=curr_pi0,theta=prop_thetak,log=TRUE)+
+          (gamma1-1)*log(prop_thetak)-gamma2*prop_thetak
+        logprob_curr <- dmallow(Pi=Pi_mat,pi0=curr_pi0,theta=ptheta[J+1,k],log=TRUE)+
+          (gamma1-1)*log(ptheta[J+1,k])-gamma2*ptheta[J+1,k]
+          
+        u <- runif(1)
+        if(log(u) <  logprob_prop-logprob_curr){
+          accept_theta <- c(accept_theta,1)
+          ptheta[J+1,k] <- prop_thetak
+        }else{accept_theta <- c(accept_theta,0)}
+      }
+      if(iter+mh_iter %in% which_keep){
+        it <- which(which_keep==(iter+mh_iter))
+        p_all[,1:Kplus,it] <- ptheta[1:J,] #update only the first Kplus parameters,
+        theta_all[it,1:Kplus] <- ptheta[J+1,] #(will update the rest later!)
+      }
+    }
+    
+    
+    ## Step 3: Update K and gamma
+    
+    #update K
+    probs <- unlist(lapply(Kplus:(Kplus+100),function(k){
+      dpois(k-1,lambda,log=T)+lfactorial(k)-lfactorial(k-Kplus)+lgamma(gamma*k)-lgamma(I+gamma*k)
+    }))
+    K <- sample(Kplus:(Kplus+100),1,prob = exp(probs-logSumExp(probs)))
+    
+    #update gamma
+    prop_gamma <- rnorm(1,gamma,mh_gamma)
+    while(prop_gamma<=0){prop_gamma <- rnorm(1,gamma,mh_gamma)}
+    logprob_prop <- dgamma(prop_gamma,gamma_hyp1,gamma_hyp2,log=TRUE)+lgamma(prop_gamma*K)-lgamma(I+prop_gamma*K)+
+      sum(lgamma(Nk[1:Kplus]+prop_gamma)-lgamma(prop_gamma))
+    logprob_curr <- dgamma(gamma,3,2,log=TRUE)+lgamma(gamma*K)-lgamma(I+gamma*K)+
+      sum(lgamma(Nk[1:Kplus]+gamma)-lgamma(gamma))
+    u <- runif(1)
+    if(log(u) <  logprob_prop-logprob_curr){
+      accept_gamma <- c(accept_gamma,1)
+      gamma <- prop_gamma
+    }else{accept_gamma <- c(accept_gamma,0)}
+    
+    ## Step 4: Update empty components
+    if(K>Kplus){
+      for(k in (Kplus+1):K){ptheta <- cbind(ptheta,c(rbeta(J,a,b),rgamma(1,gamma1,gamma2)))}
+    }
+    Nk <- unlist(lapply(1:K,function(k){sum(Z==k)}))
+    pi <- c(rdirichlet(1,gamma+Nk))
+    
+    if(length(pi)!=K | length(Nk)!=K | ncol(ptheta)!=K ){stop("something wrong!")}
+    if(Kplus > K){stop("something wrong with Kplus!")}
+    
+    ## Save Values and Update Counter
+    for(mh_iter in 0:(mh_iters-1)){
+      if((iter+mh_iter) %in% which_keep){
+        it <- which(which_keep==(iter+mh_iter))
+        K_all <- c(K_all,K)
+        Kplus_all <- c(Kplus_all,Kplus)
+        gamma_all <- c(gamma_all,gamma)
+        pi_all[it,1:K] <- pi
+        Z_all[it,] <- Z
+        if(K>Kplus){
+          p_all[,(Kplus+1):K,it] <- ptheta[1:J,(Kplus+1):K] #update only the first Kplus parameters,
+          theta_all[it,(Kplus+1):K] <- ptheta[J+1,(Kplus+1):K] #(will update the rest later!)
+        }
+      }}
+    
+    iter <- iter + mh_iters
+    if(length(progress_iters)>0 & iter >= progress_iters[1]){
+      print(paste0((11-length(progress_iters))*10,"% Complete: Iteration ",iter-1," out of ",max(which_keep)))
+      print(paste0("Current K = ",K,"; Kplus = ",Kplus))
+      progress_iters <- progress_iters[-1]
+    }
+  }
+  print(paste0("Done! Saving ",length(which_keep)," estimate iterations after burning/thinning"))
+  return(list(Z=Z_all,p=p_all[,1:max(K_all),],theta=theta_all[,1:max(K_all)],
+              pi=pi_all[,1:max(K_all)],K=K_all,Kplus=Kplus_all,gamma=gamma_all,
+              accept_p=(cumsum(accept_p)/1:length(accept_p))[seq(round(length(accept_p)*burn),length(accept_p),by=thin)],
+              accept_theta=(cumsum(accept_theta)/1:length(accept_theta))[seq(round(length(accept_theta)*burn),length(accept_theta),by=thin)],
+              accept_gamma=(cumsum(accept_gamma)/1:length(accept_gamma))[seq(round(length(accept_gamma)*burn),length(accept_gamma),by=thin)],
+              max_iters=max_iters,mh_iters=mh_iters,burn=burn,thin=thin,seed=seed))
+}
+
+# Finite Mixture (Fixed K) Estimation
+mb_fm <- function(Pi,X,M,K,a,b,gamma1,gamma2,gamma_hyp1,gamma_hyp2,
+                   mh_pjk = 0.01, mh_thetak = 1, mh_gamma = 0.1,
+                   max_iters = 100, mh_iters = 5, burn = 0.5,thin = 2,seed = NULL){
+  
+  print("Initializing Chain")
+  if(!is.null(seed)){set.seed(seed)}
+  
+  ## Determine Constants
+  I <- nrow(X)
+  J <- ncol(X)
+  R <- ncol(Pi)
+  
+  ## Set Up Data Storage
+  which_keep <- seq(from=round(burn*max_iters*mh_iters),to=max_iters * mh_iters,by=thin)
+  gamma_all <- c()
+  pi_all <- matrix(NA,nrow=length(which_keep),ncol=K)
+  p_all <- array(NA,dim=c(J,K,length(which_keep)))
+  theta_all <- matrix(NA,nrow=length(which_keep),ncol=K)
+  Z_all <- matrix(NA,nrow=length(which_keep),ncol=I)
+  accept_p <- c()
+  accept_theta <- c()
+  accept_gamma <- c()
+  
+  ## Initialize at Random
+  gamma <- rgamma(1,gamma_hyp1,gamma_hyp2)
+  pi <- c(rdirichlet(1,rep(gamma,K)))
+  ptheta <- matrix(NA,nrow=J+1,ncol=K)
+  for(k in 1:K){ptheta[,k] <- c(rbeta(J,a,b),rgamma(1,gamma1,gamma2))}
+  Z <- rep(NA,I)
+  
+  print("Starting Chain")
+  iter <- 1
+  progress_iters <- round(seq(0,max(which_keep),length=11))[-1]
+  while(iter <= max(which_keep)){
+    
+    ## Step 1: Update Labels
+    probs <- matrix(NA,nrow=I,ncol=K)
+    for(k in 1:K){
+      probs[,k] <- exp(log(pi[k])+unlist(lapply(1:I,function(i){
+        dmb(Pi=Pi[i,],X=X[i,],p=ptheta[1:J,k],theta=ptheta[J+1,k],M=M,log=T)
+      })))
+    }
+    Z <- apply(probs,1,function(prob){sample.int(K,1,prob=prob)})
+    Nk <- unlist(lapply(1:K,function(k){sum(Z==k)})) 
+    
+    
+    ## Step 2: Update component parameters
+    for(mh_iter in 0:(mh_iters-1)){
+      for(k in 1:K){
+        whichk <- which(Z == k)
+        if(length(whichk)==0 ){whichk <- 1:I}
+        constant1 <- a+apply(matrix(X[whichk,],nrow=length(whichk)),2,sum,na.rm=T)-1
+        constant2 <- b+apply(M-matrix(X[whichk,],nrow=length(whichk)),2,sum,na.rm=T)-1
+        Pi_mat <- matrix(Pi[whichk,],nrow=length(whichk))
+        
+        for(j in 1:J){ #update each p_jk
+          prop_pjk <- rnorm(1,ptheta[j,k],mh_pjk)
+          while(prop_pjk<=0 | prop_pjk>=1){prop_pjk <- rnorm(1,ptheta[j,k],mh_pjk)}
+          prop_p <- ptheta[1:J,k]
+          prop_p[j] <- prop_pjk
+          prop_pi0 <- order(prop_p)
+          curr_pi0 <- order(ptheta[1:J,k])
+          if(any(prop_pi0!=curr_pi0)){
+            logprob_prop <- dmallow(Pi=Pi_mat,pi0=prop_pi0,theta=ptheta[J+1,k],log=T)+
+              (constant1[j])*log(prop_pjk)+(constant2[j])*log(1-prop_pjk)
+            logprob_curr <- dmallow(Pi=Pi_mat,pi0=curr_pi0,theta=ptheta[J+1,k],log=T)+
+              (constant1[j])*log(ptheta[j,k])+(constant2[j])*log(1-ptheta[j,k])
+          }else{
+            logprob_prop <- (constant1[j])*log(prop_pjk)+(constant2[j])*log(1-prop_pjk)
+            logprob_curr <- (constant1[j])*log(ptheta[j,k])+(constant2[j])*log(1-ptheta[j,k])
+          }
+          
+          u <- runif(1)
+          if(log(u) <  logprob_prop-logprob_curr){
+            accept_p <- c(accept_p,1)
+            ptheta[j,k] <- prop_pjk
+          }else{accept_p <- c(accept_p,0)}
+        }
+        #update theta_k
+        prop_thetak <- rnorm(1,ptheta[J+1,k],mh_thetak)
+        while(prop_thetak<=0){prop_thetak <- rnorm(1,ptheta[J+1,k],mh_thetak)}
+        curr_pi0 <- order(ptheta[1:J,k])
+        
+        
+        logprob_prop <- dmallow(Pi=Pi_mat,pi0=curr_pi0,theta=prop_thetak,log=TRUE)+
+          (gamma1-1)*log(prop_thetak)-gamma2*prop_thetak
+        logprob_curr <- dmallow(Pi=Pi_mat,pi0=curr_pi0,theta=ptheta[J+1,k],log=TRUE)+
+          (gamma1-1)*log(ptheta[J+1,k])-gamma2*ptheta[J+1,k]
+        
+        u <- runif(1)
+        if(log(u) <  logprob_prop-logprob_curr){
+          accept_theta <- c(accept_theta,1)
+          ptheta[J+1,k] <- prop_thetak
+        }else{accept_theta <- c(accept_theta,0)}
+      }
+      if(iter+mh_iter %in% which_keep){
+        it <- which(which_keep==(iter+mh_iter))
+        p_all[,,it] <- ptheta[1:J,] 
+        theta_all[it,] <- ptheta[J+1,] 
+      }
+    }
+    
+    
+    ## Step 3: Update gamma
+    prop_gamma <- rnorm(1,gamma,mh_gamma)
+    while(prop_gamma<=0){prop_gamma <- rnorm(1,gamma,mh_gamma)}
+    logprob_prop <- dgamma(prop_gamma,gamma_hyp1,gamma_hyp2,log=TRUE)+lgamma(prop_gamma*K)-lgamma(I+prop_gamma*K)+
+      sum(lgamma(Nk[1:K]+prop_gamma)-lgamma(prop_gamma))
+    logprob_curr <- dgamma(gamma,3,2,log=TRUE)+lgamma(gamma*K)-lgamma(I+gamma*K)+
+      sum(lgamma(Nk[1:K]+gamma)-lgamma(gamma))
+    u <- runif(1)
+    if(log(u) <  logprob_prop-logprob_curr){
+      accept_gamma <- c(accept_gamma,1)
+      gamma <- prop_gamma
+    }else{accept_gamma <- c(accept_gamma,0)}
+    
+    ## Step 4: Update pi
+    pi <- c(rdirichlet(1,gamma+Nk))
+    if(length(pi)!=K | length(Nk)!=K | ncol(ptheta)!=K ){stop("something wrong!")}
+    
+    ## Save Values and Update Counter
+    for(mh_iter in 0:(mh_iters-1)){
+      if((iter+mh_iter) %in% which_keep){
+        it <- which(which_keep==(iter+mh_iter))
+        gamma_all <- c(gamma_all,gamma)
+        pi_all[it,1:K] <- pi
+        Z_all[it,] <- Z
+      }}
+    
+    iter <- iter + mh_iters
+    if(length(progress_iters)>0 & iter >= progress_iters[1]){
+      print(paste0((11-length(progress_iters))*10,"% Complete: Iteration ",iter-1," out of ",max(which_keep)))
+      progress_iters <- progress_iters[-1]
+    }
+  }
+  print(paste0("Done! Saving ",length(which_keep)," estimate iterations after burning/thinning"))
+  return(list(Z=Z_all,p=p_all,theta=theta_all,pi=pi_all,gamma=gamma_all,
+              accept_p=(cumsum(accept_p)/1:length(accept_p))[seq(round(length(accept_p)*burn),length(accept_p),by=thin)],
+              accept_theta=(cumsum(accept_theta)/1:length(accept_theta))[seq(round(length(accept_theta)*burn),length(accept_theta),by=thin)],
+              accept_gamma=(cumsum(accept_gamma)/1:length(accept_gamma))[seq(round(length(accept_gamma)*burn),length(accept_gamma),by=thin)],
+              max_iters=max_iters,mh_iters=mh_iters,burn=burn,thin=thin,seed=seed))
+}
+
+
+#### BTL-B Examples ####
+
+if(FALSE){ #change to "TRUE" to run
+  
+  # data generation
+  set.seed(1)
+  M <- 4
+  dat1 <- rmb(I=20,p=runif(5),theta=2,M=M)
+  dat2 <- rmb(I=10,p=runif(5),theta=1,M=M)
+  X <- rbind(dat1$X,dat2$X)
+  Pi <- rbind(dat1$Pi,dat2$Pi)
+  rm(dat1,dat2)
+  
+  # density functions
+  dmb(Pi=Pi,X=X,p=runif(ncol(X)),theta=1,M=M,log=TRUE)
+  dmallow(Pi=Pi,pi0=sample(1:ncol(X)),theta=1,log=TRUE)
+  
+  # map
+  map <- mb_map(Pi=Pi,X=X,M=M,K=2,gamma=1,a=2,b=2,gamma1=3,gamma2=1,
                 tol=.01,maxit=50,verbose=TRUE,seed=1)
-
-# calculation of prior on K+
-pmfstatic2 <- nClusters(Kplus=1:5,N=nrow(X),type="static",gamma=1,maxK=20)
-dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = 1))
-ggplot(data.frame(K=1:length(dens),Mass=dens),aes(K,Mass))+geom_line()+geom_point()+
-  ylab("Prior Mass on K+")+xlab("K+")
-
-# mfm
-mfm <- btlb_mfm(Pi=Pi,X=X,M=M,Pi_full=NULL,lambda=1,a=2,b=2,gamma1=10,gamma2=.5,gamma_hyp1=2,gamma_hyp2=2,
+ 
+  # calculation of prior on K+
+  pmfstatic2 <- nClusters(Kplus=1:5,N=nrow(X),type="static",gamma=1,maxK=20)
+  dens <- pmfstatic2(priorK = dpois, priorKparams = list(lambda = 1))
+  ggplot(data.frame(K=1:length(dens),Mass=dens),aes(K,Mass))+geom_line()+geom_point()+
+    ylab("Prior Mass on K+")+xlab("K+")
+  
+  # mfm
+  mfm <- mb_mfm(Pi=Pi,X=X,M=M,lambda=1,a=2,b=2,gamma1=3,gamma2=1,gamma_hyp1=2,gamma_hyp2=2,
                 startK = 1, mh_pjk = 0.01, mh_thetak = 1, mh_gamma = 0.1,
-                max_iters = 200, mh_iters = 5, burn = 0.5,thin = 2,seed = 1)
-
-# fixed K
-fm <- btlb_fm(Pi=Pi,X=X,M=M,Pi_full=NULL,K=2,
-              a=2,b=2,gamma1=10,gamma2=.5,gamma_hyp1=2,gamma_hyp2=2,
+                max_iters = 100, mh_iters = 10, burn = 0.5,thin = 2,seed = 1)
+  
+  # fm
+  fm <- mb_fm(Pi=Pi,X=X,M=M,K=2,a=2,b=2,gamma1=3,gamma2=1,gamma_hyp1=2,gamma_hyp2=2,
               mh_pjk = 0.01, mh_thetak = 1, mh_gamma = 0.1,
               max_iters = 200, mh_iters = 5, burn = 0.5, thin = 2, seed = 1)
-
+}
