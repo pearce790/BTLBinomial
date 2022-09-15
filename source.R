@@ -93,8 +93,7 @@ btlb_map <- function(Pi,X,M,Pi_full=NULL,K,gamma,a,b,gamma1,gamma2,
       }))
     }
     lik_term <- sum(apply(lik_terms,1,logSumExp))
-    prior_term <- log(ddirichlet(pi,rep(gamma,K)))+sum(dbeta(ptheta[1:J,],a,b,log=TRUE))+
-      sum(dgamma(ptheta[J+1,],gamma1,gamma2,log=TRUE))
+    prior_term <- log(ddirichlet(pi,rep(gamma,K)))+sum(dbeta(ptheta[1:J,],a,b,log=TRUE))+sum(dgamma(ptheta[J+1,],gamma1,gamma2,log=TRUE))
     currobj <- lik_term+prior_term
     return(currobj)
   }
@@ -139,7 +138,7 @@ btlb_map <- function(Pi,X,M,Pi_full=NULL,K,gamma,a,b,gamma1,gamma2,
       obj <- function(par){
         worthk <- exp(-par[1:J]*par[J+1])
         lik_term <- sum(unlist(lapply(1:I,function(i){
-          zhat_k[i]*(dbtl(Pi=Pi[i,],worth=worthk,log=T,Pi_full=Pi_full[i,])+sum(X[i,]*log(par[1:J])+(M-X[i,])*log(1-par[1:J])))
+          zhat_k[i]*(dbtl(Pi=Pi[i,],worth=worthk,log=T,Pi_full=Pi_full[i,])+sum(X[i,]*log(par[1:J])+(M-X[i,])*log(1-par[1:J]),na.rm=T))
         })))
         prior_term <- sum(dbeta(par[1:J],a,b,log=TRUE))+dgamma(par[J+1],gamma1,gamma2,log=TRUE)
         return(-lik_term-prior_term)
