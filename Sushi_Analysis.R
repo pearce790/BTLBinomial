@@ -121,10 +121,47 @@ p4 <- ggplot(plotZhat,aes(x=Var1,y=Var2,fill=value))+
   xlab(NULL)+ylab(NULL)
 ggsave("Results_Plots/Sushi_res2.pdf",p4,width=11,height=10)
 
+#### Diagnostics and Other Trace Plots ####
 
+gof <- get_gof(posterior=res,post_samples=1000,reps=20,X=X,Pi=Pi,Pi_full=NULL)
+ggsave("Results_Plots/Sushi_gof.pdf",grid.arrange(gof$p1,gof$p2,gof$p3,nrow=1),
+       width=11,height=4)
 
+plot_iters <- round(seq(res$burn*res$max_iters*res$mh_iters,res$max_iters*res$mh_iters,length=1000))
+accept_data <- melt(data.frame(iters=plot_iters,
+                               accept_p=res$accept_p[round(seq(1,length(res$accept_p),length=1000))],
+                               accept_theta=res$accept_theta[round(seq(1,length(res$accept_theta),length=1000))],
+                               accept_gamma=res$accept_theta[round(seq(1,length(res$accept_gamma),length=1000))]),
+                    id.vars="iters")
+accept_data$Parameter <- factor(accept_data$variable,labels=c("p","theta","gamma"))
+# p1 <- ggplot(data=accept_data,aes(x=iters,y=value,color=Parameter))+
+#   geom_line()+ylim(c(0,1))+ylab("Acceptance Probability")+xlab("Iteration")+
+#   theme(legend.position = "bottom")+ggtitle("Acceptance Probabilities")
+p2 <- ggplot(data=data.frame(iters=plot_iters,K=res$K[-1]),aes(iters,K))+geom_line()+
+  ylab("K")+xlab("Iteration")+
+  scale_x_continuous(breaks=seq(25000,50000,length=6),labels=paste0(seq(25,50,length=6),"k"))+
+  scale_y_continuous(breaks=1:10,limits=c(1,max(res$K,res$Kplus)))+
+  ggtitle("Trace Plot: K")
+p3 <- ggplot(data=data.frame(iters=plot_iters,Kplus=res$Kplus[-1]),aes(iters,Kplus))+geom_line()+
+  ylab("K+")+xlab("Iteration")+
+  scale_x_continuous(breaks=seq(25000,50000,length=6),labels=paste0(seq(25,50,length=6),"k"))+
+  scale_y_continuous(breaks=1:10,limits=c(1,max(res$K,res$Kplus)))+
+  ggtitle("Trace Plot: K+")
+p4 <- ggplot(data=data.frame(iters=plot_iters,gamma=res$gamma[-1]),aes(iters,gamma))+geom_line()+
+  ylim(c(0,5))+ylab(expression(gamma))+xlab("Iteration")+
+  scale_x_continuous(breaks=seq(25000,50000,length=6),labels=paste0(seq(25,50,length=6),"k"))+
+  ggtitle(expression("Trace Plot: " ~gamma ))
+p5 <- ggplot(reshape2::melt(res$pi),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
+  geom_line()+ylim(c(0,0.3))+theme(legend.position="right")+
+  ylab("Class Proportion Estimate")+xlab("Iteration")+
+  scale_x_continuous(breaks=seq(0,5000,length=6),labels=paste0(seq(25,50,length=6),"k"))+
+  labs(color="Class")+ggtitle("Trace Plot: Class Proportions, pi")+
+  theme(legend.position = "none")
 
-
+ggsave("Results_Plots/Sushi_trace1.pdf",grid.arrange(p2,p3,p4,nrow=1),
+       width=11,height=4)
+ggsave("Results_Plots/Sushi_trace2.pdf",p5,
+       width=11,height=4)
 
 
 

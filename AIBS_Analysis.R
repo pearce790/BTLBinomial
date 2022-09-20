@@ -114,6 +114,12 @@ TopProposals[,c(2,1,3)] %>% group_by(Cluster) %>% slice_min(order_by = `Posterio
 SummaryTheta
 
 #### Diagnostics and Other Trace Plots ####
+
+gof <- get_gof(posterior=res,post_samples=1000,reps=20,X=X,Pi=Pi,Pi_full=Pi_full)
+ggsave("Results_Plots/AIBS_gof.pdf",grid.arrange(gof$p1,gof$p2,gof$p3,nrow=1),
+       width=11,height=4)
+
+
 plot_iters <- round(seq(res$burn*res$max_iters*res$mh_iters,res$max_iters*res$mh_iters,length=1000))
 accept_data <- melt(data.frame(iters=plot_iters,
                                accept_p=res$accept_p[round(seq(1,length(res$accept_p),length=1000))],

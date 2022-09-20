@@ -491,6 +491,90 @@ btlb_fm <- function(Pi,X,M,Pi_full=NULL,K,a,b,gamma1,gamma2,gamma_hyp1,gamma_hyp
   
 }
 
+# Goodness-of-Fit Functions
+sample_postpred <- function(posterior,post_samples=10,reps=5){
+  J <- nrow(posterior$p)
+  X <- matrix(NA,nrow=0,ncol=J)
+  if(is.vector(posterior$pi)){posterior$pi <- matrix(posterior$pi)}
+  if(is.matrix(posterior$p)){posterior$p <- array(posterior$p,dim=c(nrow(posterior$p),1,ncol(posterior$p)))}
+  if(is.vector(posterior$theta)){posterior$theta <- matrix(posterior$theta)}
+  which_k <- 1:nrow(posterior$pi)
+  for(iteration in sample(which_k,post_samples,replace=TRUE)){
+    K <- sum(!is.na(posterior$pi[iteration,]))
+    X <- rbind(X,t(replicate(reps,{rbinom(J,M,posterior$p[,sample(1:K,1,prob=posterior$pi[iteration,1:K],replace=T),iteration])})))
+  }
+  Pi <- matrix(NA,nrow=0,ncol=J)
+  for(iteration in sample(which_k,post_samples,replace=TRUE)){
+    K <- sum(!is.na(posterior$pi[iteration,]))
+    Pi <- rbind(Pi,t(replicate(reps,{
+      z <- sample(1:K,1,prob=posterior$pi[iteration,1:K],replace=T)
+      sample(1:J,J,prob=exp(-posterior$theta[iteration,z]*posterior$p[,z,iteration]))
+    })))
+  }
+  return(list(X=X,Pi=Pi))
+}
+get_gof <- function(posterior,post_samples=10,reps=5,X,Pi,Pi_full=NULL){
+  #sample from posterior predictive
+  postpred <- sample_postpred(posterior,post_samples,reps)
+  J <- dim(posterior$p)[1]
+  
+  #calculate summary statistics for rating mean and variance
+  mean_data <- data.frame(obs=apply(X,2,function(x){mean(x,na.rm=T)}),post=apply(postpred$X,2,mean))
+  var_data <- data.frame(obs=apply(X,2,function(x){var(x,na.rm=T)}),post=apply(postpred$X,2,var))
+  
+  #calculate summary statistics for ranking mean and variance
+  pairs_data <- matrix(NA,nrow=0,ncol=2)
+  for(i in 1:(J-1)){for(j in (i+1):J){pairs_data <- rbind(pairs_data,c(i,j))}}
+  obs <- t(apply(pairs_data,1,function(ij){
+    i <- ij[1]
+    j <- ij[2]
+    
+    if(!is.null(Pi_full)){
+      which <- which(apply(Pi_full,1,function(pi){i %in% pi & j %in% pi}))
+    }else{which <- 1:nrow(Pi)}
+    if(length(which) == 0){return(c(NA,0))}
+    
+    rank_i <- apply(Pi[which,],1,function(pi){if(i %in% pi){return(which(pi==i))}else{return(NA)}})
+    rank_j <- apply(Pi[which,],1,function(pi){if(j %in% pi){return(which(pi==j))}else{return(NA)}})
+    
+    pairs <- unlist(lapply(1:length(rank_i),function(index){
+      if(!is.na(rank_i[index]) & !is.na(rank_j[index])){return(ifelse(rank_i[index] < rank_j[index],1,0))}
+      if(!is.na(rank_i[index]) & is.na(rank_j[index])){return(1)}
+      if(is.na(rank_i[index]) & !is.na(rank_j[index])){return(0)}
+      if(is.na(rank_i[index]) & is.na(rank_j[index])){return(NA)}
+    }))
+    
+    return(c(mean(pairs,na.rm=T),sum(!is.na(pairs))))
+  }))
+  post <- apply(pairs_data,1,function(ij){
+    i <- ij[1]
+    j <- ij[2]
+    rank_i <- apply(postpred$Pi,1,function(pi){which(pi==i)})
+    rank_j <- apply(postpred$Pi,1,function(pi){which(pi==j)})
+    mean(rank_i < rank_j)
+  })
+  pairs_data <- as.data.frame(cbind(pairs_data,obs,post))
+  names(pairs_data) <- c("i","j","obs","num_comparisons","post")
+  
+  #create plots
+  p1<-ggplot(mean_data,aes(x=obs,y=post))+geom_point()+
+    geom_abline(slope=1,intercept=0,linetype=2,color="red")+
+    ylim(c(0,max(mean_data)*1.1))+xlim(c(0,max(mean_data)*1.1))+
+    xlab("Observed Mean")+ylab("Posterior Predictive Expected Mean")+ggtitle("Ratings: Means")
+  p2<-ggplot(var_data,aes(x=obs,y=post))+geom_point()+
+    geom_abline(slope=1,intercept=0,linetype=2,color="red")+
+    ylim(c(0,max(var_data)*1.1))+xlim(c(0,max(var_data)*1.1))+
+    xlab("Observed Variance")+ylab("Posterior Predictive Expected Variance")+ggtitle("Ratings: Variances")
+  p3<-ggplot(pairs_data,aes(x=obs,y=post))+geom_point()+
+    geom_abline(slope=1,intercept=0,linetype=2)+
+    xlim(c(0,1))+ylim(c(0,1))+
+    xlab("Observed Probabilities")+
+    ylab("Posterior Predictive Expected Probabilities")+
+    ggtitle("Rankings: Pairwise Probabilities")
+  
+  list(mean_data=mean_data,var_data=var_data,pairs_data=pairs_data,p1=p1,p2=p2,p3=p3)
+}
+
 #### BTL-B Examples ####
 
 if(FALSE){ #change to "TRUE" to run
@@ -523,6 +607,9 @@ if(FALSE){ #change to "TRUE" to run
   mfm <- btlb_mfm(Pi=Pi,X=X,M=M,Pi_full=NULL,lambda=1,a=2,b=2,gamma1=10,gamma2=.5,gamma_hyp1=2,gamma_hyp2=2,
                   startK = 1, mh_pjk = 0.01, mh_thetak = 1, mh_gamma = 0.1,
                   max_iters = 200, mh_iters = 5, burn = 0.5,thin = 2,seed = 1)
+
+  gof <- get_gof(posterior=mfm,post_samples=500,reps=5,X=X,Pi=Pi,Pi_full=NULL)
+  #grid.arrange(gof$p1,gof$p2,gof$p3,nrow=1)
   
   # fixed K
   fm <- btlb_fm(Pi=Pi,X=X,M=M,Pi_full=NULL,K=2,
@@ -1095,3 +1182,4 @@ if(FALSE){ #change to "TRUE" to run
               mh_pjk = 0.01, mh_thetak = 1, mh_gamma = 0.1,
               max_iters = 200, mh_iters = 5, burn = 0.5, thin = 2, seed = 1)
 }
+
