@@ -66,11 +66,11 @@ accuracy_thetaplot$theta <- factor(accuracy_thetaplot$theta)
 p1 <- ggplot(accuracy_p,aes(p,phat))+geom_point(size=.01,alpha=.1)+
   facet_grid(cols=vars(M),rows=vars(R),labeller = label_both)+
   geom_abline(slope=1,intercept=0,color="red",lty=2)+
-  labs(x=expression(p),y=expression(hat(p)))
+  labs(x=expression(p[0]),y=expression(hat(p)))
 p2 <- ggplot(accuracy_theta,aes(theta,thetamap))+geom_violin()+
   geom_point(data=accuracy_thetaplot,aes(theta,thetamap),color="red")+
   facet_grid(cols=vars(M),rows=vars(R),labeller = label_both)+
-  labs(x=expression(theta),y=expression(hat(theta)))
+  labs(x=expression(theta[0]),y=expression(hat(theta)))
 ggsave("Results_Plots/Conference_res1.pdf",grid.arrange(p1,p2,ncol=2),
        width=9,height=7)
 
@@ -88,7 +88,7 @@ p3 <- ggplot(diff_p_long,aes(x=factor(theta),y=value))+geom_violin()+
 p4 <- ggplot(diff_theta,aes(factor(theta),y=diff_theta))+geom_violin()+
   facet_grid(rows=vars(R),cols=vars(M),labeller=label_both)+
   geom_abline(slope=0,intercept=0,color="red",lty=2)+
-  labs(x=expression(theta[0]),y=expression(hat(theta)))+
+  labs(x=expression(theta[0]),y=expression(hat(theta) - theta[0]))+
   theme(legend.position = "none")
 ggsave("Results_Plots/Conference_res2.pdf",grid.arrange(p3,p4,ncol=2),
        width=9,height=4)
