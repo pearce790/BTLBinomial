@@ -129,33 +129,42 @@ accept_data <- melt(data.frame(iters=plot_iters,
 accept_data$Parameter <- factor(accept_data$variable,labels=c("p","theta","gamma"))
 p1 <- ggplot(data=accept_data,aes(x=iters,y=value,color=Parameter))+
   geom_line()+ylim(c(0,1))+ylab("Acceptance Probability")+xlab("Iteration")+
+  scale_x_continuous(breaks=seq(5000,10000,length=6),labels=paste0(5:10,"k"))+
   theme(legend.position = "bottom")+ggtitle("Acceptance Probabilities")
 p2 <- ggplot(data=data.frame(iters=plot_iters,K=res$K[-1]),aes(iters,K))+geom_line()+
   ylim(c(1,max(res$K,res$Kplus)))+ylab("K")+xlab("Iteration")+
+  scale_x_continuous(breaks=seq(5000,10000,length=6),labels=paste0(5:10,"k"))+
   ggtitle("Trace Plot: K")
 p3 <- ggplot(data=data.frame(iters=plot_iters,Kplus=res$Kplus[-1]),aes(iters,Kplus))+geom_line()+
   ylim(c(1,max(res$K,res$Kplus)))+ylab("K+")+xlab("Iteration")+
+  scale_x_continuous(breaks=seq(5000,10000,length=6),labels=paste0(5:10,"k"))+
   ggtitle("Trace Plot: K+")
 p4 <- ggplot(data=data.frame(iters=plot_iters,gamma=res$gamma[-1]),aes(iters,gamma))+geom_line()+
-  ylim(c(0,4))+ylab("gamma")+xlab("Iteration")+
-  ggtitle("Trace Plot: gamma")
+  ylim(c(0,4))+ylab(expression(gamma))+xlab("Iteration")+
+  scale_x_continuous(breaks=seq(5000,10000,length=6),labels=paste0(5:10,"k"))+
+  ggtitle(expression("Trace Plot:" ~gamma))
 p5 <- ggplot(reshape2::melt(res$pi),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
   geom_line()+ylim(c(0,1))+theme(legend.position="right")+
-  ylab("Class Proportion Estimate")+xlab("Iteration")+
+  ylab(expression(pi))+xlab("Iteration")+
   scale_x_continuous(breaks=seq(0,1000,length=6),labels=paste0(5:10,"k"))+
-  labs(color="Class")+ggtitle("Trace Plot: Class Proportions, pi")+
+  labs(color="Class")+ggtitle(expression("Trace Plot: Class Proportions, "~pi))+
   theme(legend.position = "none")
-p6 <- ggplot(reshape2::melt(res$Z),aes(x=Var1,y=jitter(value,.5),group=Var2,color=factor(Var2)))+
+plotZ <- reshape2::melt(res$Z)
+plotZ$value <- as.numeric(factor(plotZ$value,levels=c(2,1,3),labels=c(1,2,3)))
+p6 <- ggplot(plotZ,aes(x=Var1,y=jitter(value,.5),group=Var2,color=factor(Var2)))+
   geom_line()+theme(legend.position="none")+ylim(c(0,max(res$Kplus)+1))+
   ylab("Class")+xlab("Iteration")+
   scale_x_continuous(breaks=seq(0,1000,length=6),labels=paste0(5:10,"k"))+
   labs(color="Class")+ggtitle("Trace Plot: Class Memberships, Z")
-p7 <- ggplot(reshape2::melt(res$theta),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
+plotTheta <- reshape2::melt(res$theta)
+plotTheta$Var2<- as.numeric(factor(plotTheta$Var2,levels=c(2,1,3,4,5),labels=c(1,2,3,4,5)))
+p7 <- ggplot(plotTheta,aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
   geom_line()+theme(legend.position="right")+ylim(c(0,max(res$theta)+1))+
-  ylab("theta")+xlab("Iteration")+
+  ylab(expression(theta))+xlab("Iteration")+
   scale_x_continuous(breaks=seq(0,1000,length=6),labels=paste0(5:10,"k"))+
-  labs(color="Class")+ggtitle("Trace Plot: theta")
+  labs(color="Class")+ggtitle(expression("Trace Plot:"~theta))
 plot_p <- reshape2::melt(res$p)
+plot_p$Var2 <- as.numeric(factor(plot_p$Var2,levels=c(2,1,3,4,5),labels=c(1,2,3,4,5)))
 plot_p$jk <- as.factor(paste0(plot_p$Var1,"_",plot_p$Var2))
 p8 <- ggplot(plot_p,aes(x=Var3,y=value,group=jk,color=factor(Var2)))+
   facet_wrap(vars(Var1))+
@@ -164,10 +173,10 @@ p8 <- ggplot(plot_p,aes(x=Var3,y=value,group=jk,color=factor(Var2)))+
   scale_x_continuous(breaks=seq(0,1000,length=6),labels=paste0(5:10,"k"))+
   labs(color="Class")+ggtitle("Trace Plot: p")
 
-ggsave("Results_Plots/AIBS_trace1.pdf",grid.arrange(p1,p2,p3,nrow=1),
+ggsave("Results_Plots/AIBS_trace1.pdf",grid.arrange(p2,p3,p4,nrow=1),
        width=11,height=4)
-ggsave("Results_Plots/AIBS_trace2.pdf",grid.arrange(p4,p5,p6,p7,layout_matrix=rbind(c(2,4),c(1,3))),
-       width=11,height=8)
+ggsave("Results_Plots/AIBS_trace2.pdf",grid.arrange(p6,p5,p7,nrow=1),
+       width=11,height=4)
 ggsave("Results_Plots/AIBS_trace3.pdf",p8,width=11,height=11)
 
 

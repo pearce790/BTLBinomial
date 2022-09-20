@@ -153,9 +153,9 @@ p4 <- ggplot(data=data.frame(iters=plot_iters,gamma=res$gamma[-1]),aes(iters,gam
   ggtitle(expression("Trace Plot: " ~gamma ))
 p5 <- ggplot(reshape2::melt(res$pi),aes(x=Var1,y=value,group=Var2,color=factor(Var2)))+
   geom_line()+ylim(c(0,0.3))+theme(legend.position="right")+
-  ylab("Class Proportion Estimate")+xlab("Iteration")+
+  ylab(expression(pi))+xlab("Iteration")+
   scale_x_continuous(breaks=seq(0,5000,length=6),labels=paste0(seq(25,50,length=6),"k"))+
-  labs(color="Class")+ggtitle("Trace Plot: Class Proportions, pi")+
+  labs(color="Class")+ggtitle(expression("Trace Plot: Class Proportions, "~pi))+
   theme(legend.position = "none")
 
 ggsave("Results_Plots/Sushi_trace1.pdf",grid.arrange(p2,p3,p4,nrow=1),
