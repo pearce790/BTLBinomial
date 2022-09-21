@@ -77,12 +77,12 @@ dbtl <- function(Pi,worth,log=FALSE,Pi_full=NULL){
 }
 
 # MAP Estimation
-btlb_map <- function(Pi,X,M,Pi_full=NULL,K,gamma,a,b,gamma1,gamma2,
+btlb_map <- function(Pi,X,M,Pi_full=NULL,K,xi1,xi2,a,b,gamma1,gamma2,
                      tol=1,maxit=50,verbose=TRUE,seed=NULL){
   
   
   # function to calculate objective function
-  get_obj <- function(ptheta,pi){
+  get_obj <- function(ptheta,pi,gamma){
     lik_terms <- matrix(NA,nrow=I,ncol=K)
     for(k in 1:K){
       pk <- ptheta[1:J,k]
@@ -93,7 +93,8 @@ btlb_map <- function(Pi,X,M,Pi_full=NULL,K,gamma,a,b,gamma1,gamma2,
       }))
     }
     lik_term <- sum(apply(lik_terms,1,logSumExp))
-    prior_term <- log(ddirichlet(pi,rep(gamma,K)))+sum(dbeta(ptheta[1:J,],a,b,log=TRUE))+sum(dgamma(ptheta[J+1,],gamma1,gamma2,log=TRUE))
+    prior_term <- dgamma(gamma,xi1,xi2,log=TRUE)+log(ddirichlet(pi,rep(gamma,K)))+
+      sum(dbeta(ptheta[1:J,],a,b,log=TRUE))+sum(dgamma(ptheta[J+1,],gamma1,gamma2,log=TRUE))
     currobj <- lik_term+prior_term
     return(currobj)
   }
@@ -104,12 +105,13 @@ btlb_map <- function(Pi,X,M,Pi_full=NULL,K,gamma,a,b,gamma1,gamma2,
   
   # initializers
   if(!is.null(seed)){set.seed(seed)}
+  gamma <- rgamma(1,xi1,xi2)
   pi <- rep(1/K,K)
   ptheta <- matrix(c(rbeta(J*K,a,b),rgamma(K,gamma1,gamma2)),byrow=TRUE,nrow=J+1,ncol=K)
   Z <- matrix(NA,nrow=I,ncol=K)
   
   #get current loglikelihood
-  curr_obj <- get_obj(ptheta,pi)
+  curr_obj <- get_obj(ptheta,pi,gamma)
   
   currdiff <- Inf
   iter <- 0
@@ -128,8 +130,19 @@ btlb_map <- function(Pi,X,M,Pi_full=NULL,K,gamma,a,b,gamma1,gamma2,
 
     
     # M-Step:
-    ## Update (p,theta)
+    
+    ## Update pi
     t2 <- Sys.time()
+    pi <- (gamma-1+apply(Z,2,sum))/(I - K + gamma*K)
+    if(round(sum(pi),5)!=1){print("Error! Something with pi is wrong")}
+    
+    ## Update gamma
+    t3 <- Sys.time()
+    gamma <- optimize(f=function(gamma){lgamma(gamma*K)-K*lgamma(gamma)+(xi1-1)*log(gamma)+gamma*(sum(log(pi))-xi2)},
+                      interval=c(1e-8,qgamma(1-1e-8,xi1,xi2)),maximum=TRUE)$maximum
+    
+    ## Update (p,theta)
+    t4 <- Sys.time()
     for(k in 1:K){
       #print(k)
       zhat_k <- Z[,k]
@@ -146,28 +159,25 @@ btlb_map <- function(Pi,X,M,Pi_full=NULL,K,gamma,a,b,gamma1,gamma2,
       ptheta[,k] <- optim(ptheta[,k],obj,method="L-BFGS-B",lower=rep(0.00001,J+1),upper=c(rep(1-.00001,J),qgamma(.9999,gamma1,gamma2)))$par
     }
     
-    ## Update pi
-    t3 <- Sys.time()
-    pi <- (gamma-1+apply(Z,2,sum))/(I - K + gamma*K)
-    if(round(sum(pi),5)!=1){print("Error! Something with pi is wrong")}
+    
 
    
     # Iteration Updates
-    t4 <- Sys.time()
-    new_obj <- get_obj(ptheta,pi)
+    t5 <- Sys.time()
+    new_obj <- get_obj(ptheta,pi,gamma)
     currdiff <- new_obj-curr_obj
     curr_obj <- new_obj
-    t5 <- Sys.time()
+    t6 <- Sys.time()
     
     if(verbose){
       print(paste0("End of Iteration ",iter))
-      print("Time to update Z, ptheta,pi,objective: ")
-      print(round(c(t2-t1,t3-t2,t4-t3,t5-t4),2))
+      print("Time to update Z, pi, gamma,ptheta,objective: ")
+      print(round(c(t2-t1,t3-t2,t4-t3,t5-t4,t6-t5),2))
       print(paste0("Difference: ",round(currdiff,3)))
     }
   }
   
-  return(list(p=ptheta[1:J,],theta=ptheta[J+1,],pihat=pi,Z=Z,obj=curr_obj))
+  return(list(p=ptheta[1:J,],theta=ptheta[J+1,],pihat=pi,gammahat=gamma,Z=Z,obj=curr_obj))
   
 }
 
@@ -594,7 +604,7 @@ if(FALSE){ #change to "TRUE" to run
   
   # map
   map <- btlb_map(Pi=Pi,X=X,M=M,Pi_full=NULL,K=2,
-                  gamma=1,a=2,b=2,gamma1=10,gamma2=.5,
+                  xi1=2,xi2=3,a=2,b=2,gamma1=10,gamma2=.5,
                   tol=.01,maxit=50,verbose=TRUE,seed=1)
   
   # calculation of prior on K+
