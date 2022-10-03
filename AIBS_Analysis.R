@@ -115,7 +115,7 @@ SummaryTheta
 
 #### Diagnostics and Other Trace Plots ####
 
-gof <- get_gof(posterior=res,post_samples=1000,reps=20,X=X,Pi=Pi,Pi_full=Pi_full)
+gof <- get_gof(posterior=res,post_samples=1000,reps=nrow(X),X=X,Pi=Pi,Pi_full=Pi_full,seed=1)
 ggsave("Results_Plots/AIBS_gof.pdf",grid.arrange(gof$p1,gof$p2,gof$p3,nrow=1),
        width=11,height=4)
 

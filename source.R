@@ -523,16 +523,24 @@ sample_postpred <- function(posterior,post_samples=10,reps=5){
   }
   return(list(X=X,Pi=Pi))
 }
-get_gof <- function(posterior,post_samples=10,reps=5,X,Pi,Pi_full=NULL){
+get_gof <- function(posterior,post_samples=1000,reps=nrow(X),X,Pi,Pi_full=NULL,seed=NULL){
+  
+  if(!is.null(seed)){set.seed(seed)}
+  
   #sample from posterior predictive
-  postpred <- sample_postpred(posterior,post_samples,reps)
+  postpred <- t(replicate(post_samples,{
+    data <- sample_postpred(posterior,1,reps)
+    c(apply(data$X,2,mean),apply(data$X,2,var))
+  }))
   J <- dim(posterior$p)[1]
   
   #calculate summary statistics for rating mean and variance
-  mean_data <- data.frame(obs=apply(X,2,function(x){mean(x,na.rm=T)}),post=apply(postpred$X,2,mean))
-  var_data <- data.frame(obs=apply(X,2,function(x){var(x,na.rm=T)}),post=apply(postpred$X,2,var))
+  postpred_mean <- melt(postpred[,1:J])
+  postpred_var <- melt(postpred[,(J+1):(2*J)])
+  mean_data <- apply(X,2,function(x){mean(x,na.rm=T)})
+  var_data <- apply(X,2,function(x){var(x,na.rm=T)})
   
-  #calculate summary statistics for ranking mean and variance
+  #calculate summary statistics for pairwise comparisons
   pairs_data <- matrix(NA,nrow=0,ncol=2)
   for(i in 1:(J-1)){for(j in (i+1):J){pairs_data <- rbind(pairs_data,c(i,j))}}
   obs <- t(apply(pairs_data,1,function(ij){
@@ -556,6 +564,7 @@ get_gof <- function(posterior,post_samples=10,reps=5,X,Pi,Pi_full=NULL){
     
     return(c(mean(pairs,na.rm=T),sum(!is.na(pairs))))
   }))
+  postpred <- sample_postpred(posterior,post_samples,reps)
   post <- apply(pairs_data,1,function(ij){
     i <- ij[1]
     j <- ij[2]
@@ -567,14 +576,14 @@ get_gof <- function(posterior,post_samples=10,reps=5,X,Pi,Pi_full=NULL){
   names(pairs_data) <- c("i","j","obs","num_comparisons","post")
   
   #create plots
-  p1<-ggplot(mean_data,aes(x=obs,y=post))+geom_point()+
-    geom_abline(slope=1,intercept=0,linetype=2,color="red")+
-    ylim(c(0,max(mean_data)*1.1))+xlim(c(0,max(mean_data)*1.1))+
-    xlab("Observed Mean")+ylab("Posterior Predictive Expected Mean")+ggtitle("Ratings: Means")
-  p2<-ggplot(var_data,aes(x=obs,y=post))+geom_point()+
-    geom_abline(slope=1,intercept=0,linetype=2,color="red")+
-    ylim(c(0,max(var_data)*1.1))+xlim(c(0,max(var_data)*1.1))+
-    xlab("Observed Variance")+ylab("Posterior Predictive Expected Variance")+ggtitle("Ratings: Variances")
+  p1<-ggplot(postpred_mean,aes(factor(Var2),value))+geom_violin()+
+    geom_point(data=data.frame(Var2=1:J,value=mean_data),aes(factor(Var2),value),color="red")+
+    ylim(c(0,max(postpred_mean[,"value"],mean_data,40)))+
+    xlab("Proposal")+ylab("Posterior Predictive Mean")+ggtitle("Ratings: Mean")
+  p2<-ggplot(postpred_var,aes(factor(Var2),value))+geom_violin()+
+    ylim(c(0,max(postpred_var[,"value"],var_data)))+
+    geom_point(data=data.frame(Var2=1:J,value=var_data),aes(factor(Var2),value),color="red")+
+    xlab("Proposal")+ylab("Posterior Predictive Variance")+ggtitle("Ratings: Variance")
   p3<-ggplot(pairs_data,aes(x=obs,y=post))+geom_point()+
     geom_abline(slope=1,intercept=0,linetype=2)+
     xlim(c(0,1))+ylim(c(0,1))+
@@ -584,6 +593,7 @@ get_gof <- function(posterior,post_samples=10,reps=5,X,Pi,Pi_full=NULL){
   
   list(mean_data=mean_data,var_data=var_data,pairs_data=pairs_data,p1=p1,p2=p2,p3=p3)
 }
+
 
 #### BTL-B Examples ####
 
