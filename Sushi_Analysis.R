@@ -123,8 +123,19 @@ ggsave("Results_Plots/Sushi_res2.pdf",p4,width=11,height=10)
 
 #### Diagnostics and Other Trace Plots ####
 
-gof <- get_gof(posterior=res,post_samples=1000,reps=20,X=X,Pi=Pi,Pi_full=NULL)
-ggsave("Results_Plots/Sushi_gof.pdf",grid.arrange(gof$p1,gof$p2,gof$p3,nrow=1),
+gof <- get_gof(posterior=res,post_samples=200,reps=5000,X=X,Pi=Pi,Pi_full=NULL,seed=1)
+p1 <- gof$p1 + ylim(c(0,M))+xlab("Sushi Type")+
+  scale_x_discrete(labels=c("Shrimp","Sea Eel","Tuna","Squid",
+                            "Sea Urchin","Salmon Roe","Egg",
+                            "Fatty Tuna","Tuna Roll","Cucumber Roll"))+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p2 <- gof$p2 + xlab("Sushi Type")+
+  scale_x_discrete(labels=c("Shrimp","Sea Eel","Tuna","Squid",
+                            "Sea Urchin","Salmon Roe","Egg",
+                            "Fatty Tuna","Tuna Roll","Cucumber Roll"))+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+  
+ggsave("Results_Plots/Sushi_gof.pdf",grid.arrange(p1,p2,gof$p3,nrow=1),
        width=11,height=4)
 
 plot_iters <- round(seq(res$burn*res$max_iters*res$mh_iters,res$max_iters*res$mh_iters,length=1000))
